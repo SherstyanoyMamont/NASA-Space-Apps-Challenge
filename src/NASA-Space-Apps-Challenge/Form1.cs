@@ -423,11 +423,16 @@ namespace NASA_Space_Apps_Challenge
 
         private void button1_Click(object sender, EventArgs e)
         {
-            GetHLSData();
+            //GetHLSData();
+
+
 
             //var token = AppeearsLoginAsync("asceg", "In345-523-234Code");
 
             //File.WriteAllText("appeears_token", token.Result);
+
+            LocalBloomForm form = new LocalBloomForm();
+            form.ShowDialog();
 
         }
 
