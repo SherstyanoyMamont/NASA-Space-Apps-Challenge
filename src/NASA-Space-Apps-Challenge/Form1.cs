@@ -13,11 +13,9 @@ namespace NASA_Space_Apps_Challenge
     {
 
         private string googleApiKey = "AIzaSyAvUxaijMF39FQe9vU5Gz3XCOb5NTPEPWY"; // твой Google API Key
-
         private int currentOpacity = 50;
         private string currentType = "TREE_UPI";
         private DateTime selectedDate = DateTime.Today;
-
         private HttpClient client = new HttpClient();
 
 
@@ -25,48 +23,34 @@ namespace NASA_Space_Apps_Challenge
         {
             InitializeComponent();
 
+    
             // TrackBar
             trackBar1.Minimum = 0;
             trackBar1.Maximum = 100;
             trackBar1.Value = currentOpacity;
-            trackBar1.Scroll += TrackBar1_Scroll;
+            trackBar1.Scroll += (s, e) => { currentOpacity = trackBar1.Value; InitMap(); };
 
             // ComboBox
             comboBox1.Items.AddRange(new string[] { "TREE_UPI", "GRASS_UPI", "WEED_UPI" });
             comboBox1.SelectedIndex = 0;
-            comboBox1.SelectedIndexChanged += ComboBox1_SelectedIndexChanged;
+            comboBox1.SelectedIndexChanged += (s, e) => { currentType = comboBox1.SelectedItem.ToString(); InitMap(); };
 
             // DatePicker
-            dateTimePicker1.ValueChanged += DateTimePicker1_ValueChanged;
+            dateTimePicker1.ValueChanged += (s, e) => { selectedDate = dateTimePicker1.Value.Date; InitMap(); };
 
             InitMap();
         }
 
-        private void TrackBar1_Scroll(object sender, EventArgs e)
-        {
-            currentOpacity = trackBar1.Value;
-            InitMap();
-        }
-        private void ComboBox1_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            currentType = comboBox1.SelectedItem.ToString();
-            InitMap();
-        }
-        private void DateTimePicker1_ValueChanged(object sender, EventArgs e)
-        {
-            selectedDate = dateTimePicker1.Value.Date;
-            InitMap();
-        }
+      
 
         private async void InitMap()
         {
             await webView21.EnsureCoreWebView2Async(null);
-
             double opacityValue = currentOpacity / 100.0;
 
-            // Если сегодня → используем Google heatmap tiles
             if (selectedDate == DateTime.Today)
             {
+                // Сегодняшний день — используем готовые тайлы Google
                 string html = $@"
                 <!DOCTYPE html>
                 <html>
@@ -74,9 +58,9 @@ namespace NASA_Space_Apps_Challenge
                   <meta charset='utf-8'>
                   <style>
                     html, body {{ height: 100%; margin: 0; padding: 0; }}
-                    #map {{ height: 500px; width: 900px; }}
+                    #map {{ height: 100%; width: 100%; }}
                   </style>
-                  <script src='https://maps.googleapis.com/maps/api/js?key={googleApiKey}&libraries=visualization'></script>
+                  <script src='https://maps.googleapis.com/maps/api/js?key={googleApiKey}'></script>
                   <script>
                   function initMap() {{
                       var map = new google.maps.Map(document.getElementById('map'), {{
@@ -106,10 +90,8 @@ namespace NASA_Space_Apps_Challenge
             }
             else
             {
-                // Прогноз
-                int daysDiff = (selectedDate - DateTime.Today).Days;
-                if (daysDiff < 0) daysDiff = 0;
-                if (daysDiff > 5) daysDiff = 5;
+                // Будущие даты — используем JSON и Heatmap
+                int daysDiff = Math.Clamp((selectedDate - DateTime.Today).Days, 0, 5);
 
                 string forecastJson = await GetPollenForecast(32.287014, -96.967893, daysDiff);
                 string jsHeatmapData = ParseForecastToJs(forecastJson, daysDiff);
@@ -155,20 +137,21 @@ namespace NASA_Space_Apps_Challenge
 
         private async Task<string> GetPollenForecast(double lat, double lon, int days)
         {
-            var url = $"https://pollen.googleapis.com/v1/forecast:lookup?key={googleApiKey}";
+            string url = $"https://pollen.googleapis.com/v1/forecast:lookup?key={googleApiKey}" +
+                         $"&location.latitude={lat.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
+                         $"&location.longitude={lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}" +
+                         $"&days={days}&languageCode=en&plantsDescription=true";
 
-            string body = $@"
-            {{
-              ""location"": {{
-                ""latitude"": {lat.ToString(System.Globalization.CultureInfo.InvariantCulture)},
-                ""longitude"": {lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}
-              }},
-              ""days"": {days},
-              ""plants"": [""TREE"", ""GRASS"", ""WEED""]
-            }}";
-
-            var response = await client.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
-            return await response.Content.ReadAsStringAsync();
+            try
+            {
+                var response = await client.GetStringAsync(url);
+                return response;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error fetching pollen forecast: " + ex.Message);
+                return "{}"; // возвращаем пустой JSON, чтобы не падал парсер
+            }
         }
 
         private string ParseForecastToJs(string json, int dayIndex)
@@ -179,11 +162,9 @@ namespace NASA_Space_Apps_Challenge
                 var day = obj["dailyInfo"]?[dayIndex];
                 if (day == null) return "var heatmapData = [];";
 
-                var types = day["types"];
-                StringBuilder jsData = new StringBuilder();
-                jsData.Append("var heatmapData = [");
+                var types = day["pollenTypeInfo"];
+                StringBuilder jsData = new StringBuilder("var heatmapData = [");
 
-                // сопоставляем ComboBox -> forecast type
                 string forecastType = currentType switch
                 {
                     "TREE_UPI" => "TREE",
@@ -194,18 +175,16 @@ namespace NASA_Space_Apps_Challenge
 
                 foreach (var t in types)
                 {
-                    string type = t["type"]?.ToString();
+                    string type = t["code"]?.ToString();
                     if (type != forecastType) continue;
 
                     int value = t["indexInfo"]?["value"]?.ToObject<int>() ?? 0;
-
-                    // создаем 5 точек с этим весом вокруг центра
                     Random rnd = new Random();
+
                     for (int i = 0; i < 5; i++)
                     {
                         double lat = 32.287014 + (rnd.NextDouble() - 0.5) * 0.1;
                         double lon = -96.967893 + (rnd.NextDouble() - 0.5) * 0.1;
-
                         jsData.Append($@"{{location: new google.maps.LatLng({lat.ToString(System.Globalization.CultureInfo.InvariantCulture)}, {lon.ToString(System.Globalization.CultureInfo.InvariantCulture)}), weight: {value}}},");
                     }
                 }
@@ -218,6 +197,54 @@ namespace NASA_Space_Apps_Challenge
                 return "var heatmapData = [];";
             }
         }
+
+        private async Task<(double lat, double lng)> GetCityCoordinates(string cityName)
+        {
+            string url = $"https://maps.googleapis.com/maps/api/geocode/json?address={Uri.EscapeDataString(cityName)}&key={googleApiKey}";
+            var response = await client.GetStringAsync(url);
+            var json = JObject.Parse(response);
+            var location = json["results"]?.First?["geometry"]?["location"];
+            if (location != null)
+                return (location["lat"].Value<double>(), location["lng"].Value<double>());
+            return (0, 0); // город не найден
+        }
+
+        public async Task<string> GetCityPollenForecastAsync(string cityName)
+        {
+            var (lat, lng) = await GetCityCoordinates(cityName);
+            if (lat == 0 && lng == 0) return "City not found";
+
+            string forecastJson = await GetPollenForecast(lat, lng, 1);
+            Console.WriteLine("RESPONSE:");
+            Console.WriteLine(forecastJson);
+
+            var obj = JObject.Parse(forecastJson);
+            var dayInfo = obj["dailyInfo"]?[0];
+            if (dayInfo == null) return "No forecast available";
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine($"City: {cityName}");
+
+            foreach (var type in dayInfo["pollenTypeInfo"])
+            {
+                string name = type["displayName"]?.ToString() ?? type["code"]?.ToString() ?? "Unknown";
+                string category = type["indexInfo"]?["category"]?.ToString() ?? "None";
+                int value = type["indexInfo"]?["value"]?.ToObject<int>() ?? 0;
+
+                sb.AppendLine($"{name}: {category} (UPI: {value})");
+            }
+
+            return sb.ToString();
+        }
+
+        private void ButtonCityForecast3_Click(object sender, EventArgs e)
+        {
+            CityForecastForm cityForm = new CityForecastForm(this);
+            cityForm.Show();
+
+        }
+
+
 
 
         /// <summary>
@@ -400,5 +427,7 @@ namespace NASA_Space_Apps_Challenge
         {
 
         }
+
+        
     }
 }
