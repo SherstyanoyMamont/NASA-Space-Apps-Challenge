@@ -29,7 +29,7 @@
         private void InitializeComponent()
         {
             label1 = new Label();
-            label2 = new Label();
+            labelCity = new Label();
             CityTextBox = new TextBox();
             buttonGetForecast = new Button();
             label3 = new Label();
@@ -45,18 +45,19 @@
             label1.Size = new Size(100, 23);
             label1.TabIndex = 10;
             // 
-            // label2
+            // labelCity
             // 
-            label2.AutoSize = true;
-            label2.Location = new Point(45, 76);
-            label2.Name = "label2";
-            label2.Size = new Size(257, 25);
-            label2.TabIndex = 1;
-            label2.Text = "Enter city name or coordinates:";
+            labelCity.AutoSize = true;
+            labelCity.Font = new Font("Segoe UI", 11F);
+            labelCity.Location = new Point(45, 76);
+            labelCity.Name = "labelCity";
+            labelCity.Size = new Size(313, 30);
+            labelCity.TabIndex = 1;
+            labelCity.Text = "Enter city name or coordinates:";
             // 
             // CityTextBox
             // 
-            CityTextBox.Location = new Point(344, 76);
+            CityTextBox.Location = new Point(397, 77);
             CityTextBox.Name = "CityTextBox";
             CityTextBox.Size = new Size(182, 31);
             CityTextBox.TabIndex = 2;
@@ -78,7 +79,7 @@
             // 
             // TextBoxResult
             // 
-            TextBoxResult.Location = new Point(414, 420);
+            TextBoxResult.Location = new Point(467, 420);
             TextBoxResult.Name = "TextBoxResult";
             TextBoxResult.Size = new Size(112, 34);
             TextBoxResult.TabIndex = 8;
@@ -99,7 +100,7 @@
             // 
             ForecastBox.Location = new Point(45, 186);
             ForecastBox.Name = "ForecastBox";
-            ForecastBox.Size = new Size(481, 129);
+            ForecastBox.Size = new Size(534, 129);
             ForecastBox.TabIndex = 12;
             ForecastBox.Text = "";
             ForecastBox.TextChanged += ForecastBox_TextChanged;
@@ -108,14 +109,14 @@
             // 
             AutoScaleDimensions = new SizeF(10F, 25F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(567, 491);
+            ClientSize = new Size(623, 491);
             Controls.Add(ForecastBox);
             Controls.Add(dateTimePicker1);
             Controls.Add(TextBoxResult);
             Controls.Add(label3);
             Controls.Add(buttonGetForecast);
             Controls.Add(CityTextBox);
-            Controls.Add(label2);
+            Controls.Add(labelCity);
             Controls.Add(label1);
             Name = "CityForecastForm";
             Text = "CityForecastForm";
@@ -126,7 +127,7 @@
         #endregion
 
         private Label label1;
-        private Label label2;
+        private Label labelCity;
         private TextBox CityTextBox;
         private Button buttonGetForecast;
         private Label label3;
