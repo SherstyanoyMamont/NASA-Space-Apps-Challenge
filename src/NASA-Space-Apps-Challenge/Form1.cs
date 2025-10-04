@@ -1,6 +1,14 @@
 ﻿using System.Net.Http.Headers;
 using System.Net.Http;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 using System.Text.Json;
 using Newtonsoft.Json.Linq;
 
@@ -13,6 +21,7 @@ namespace NASA_Space_Apps_Challenge
     {
 
         private string googleApiKey = "AIzaSyAvUxaijMF39FQe9vU5Gz3XCOb5NTPEPWY"; // твой Google API Key
+
         private int currentOpacity = 50;
         private string currentType = "TREE_UPI";
         private DateTime selectedDate = DateTime.Today;
@@ -415,11 +424,16 @@ namespace NASA_Space_Apps_Challenge
 
         private void button1_Click(object sender, EventArgs e)
         {
-            GetHLSData();
+            //GetHLSData();
+
+
 
             //var token = AppeearsLoginAsync("asceg", "In345-523-234Code");
 
             //File.WriteAllText("appeears_token", token.Result);
+
+            LocalBloomForm form = new LocalBloomForm();
+            form.ShowDialog();
 
         }
 
