@@ -15,6 +15,9 @@ namespace NASA_Space_Apps_Challenge {
         private readonly double HEATMAP_ALPHA_SCALE = 1.0;
         private readonly double NDVI_MIN = 0.20; // нижний порог “растительности”
         private readonly double GAMMA = 1.20;        // >1 — красное позже, <1 — раньше
+
+
+
         private readonly double PLO = 5, PHI = 95; // перцентильный клип для стабильного контраста
 
 
