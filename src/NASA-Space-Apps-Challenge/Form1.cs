@@ -21,6 +21,7 @@ namespace NASA_Space_Apps_Challenge
     {
 
         private string googleApiKey = "AIzaSyAvUxaijMF39FQe9vU5Gz3XCOb5NTPEPWY"; // твой Google API Key
+
         private int currentOpacity = 50;
         private string currentType = "TREE_UPI";
         private DateTime selectedDate = DateTime.Today;
