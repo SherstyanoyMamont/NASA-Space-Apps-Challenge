@@ -19,10 +19,38 @@ namespace NASA_Space_Apps_Challenge {
 
 
 
-        private readonly string EARTH_LOGIN_TOKEN =
-                   "eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6ImFzY2VnIiwiZXhwIjoxNzY0NzI0Mzg3LCJpYXQiOjE3NTk1NDAzODcsImlzcyI6Imh0dHBzOi8vdXJzLmVhcnRoZGF0YS5uYXNhLmdvdiIsImlkZW50aXR5X3Byb3ZpZGVyIjoiZWRsX29wcyIsImFjciI6ImVkbCIsImFzc3VyYW5jZV9sZXZlbCI6M30.zPuUBGNgjzzeIbXzQu2Tt2B5XSG-VWUfQa8229fjLzEcRIi2dGKKIqofs1oFksOuYIKHky43WD8y6oce8yrIi4YgV5_5yjdDpeL2T7SMdmYbZxMUsI1rCYFRUuz3IBO8bJCE9E3JPqY9wewtTmY0XxjVKTBRkCu-q8Okzh-VZkoUlypnGgF_RvbEKt6DFVIrLmkVhYslIJ_ipdngLNSgVVV-ZeKZ3uT--h7NdhPcryukNWY5hkQ8mlfOjdhWYgBTz0RFPsLkEh7Pf0Ynk1EE7QS-Q_w_kl-I_pBNkYmE4SglS4PF-5s0PgmfH6iKC0ST91UB5605L5gL2pa7gcUBAQ";
-        private readonly string GOOGLE_API_KEY =
-            "AIzaSyC_mRdsNwDiZSkVRIccqExl3WjVFT5ounc";
+        // -------------------------------------------------------
+        // Progress Bar
+        // -------------------------------------------------------
+
+        // UI: progressBar1, labelStatus, btnCancel — добавь на форму в дизайнере
+        CancellationTokenSource? _cts;
+
+        // этапы пайплайна (для красивого процентовщика)
+        enum Stage { Search = 0, Download = 1, Warp = 2, Bake = 3, Show = 4, Done = 5, Error = 6 }
+
+        record ProgressEvent(Stage stage, int current, int total, string note = "");
+
+
+        static readonly Dictionary<Stage, double> Weights = new() {
+            { Stage.Search,   0.05 },   // 5%  — STAC запрос
+            { Stage.Download, 0.20 },   // 20% — качаем TIFF’ы
+            { Stage.Warp,     0.45 },   // 45% — gdalwarp (самое долгое)
+            { Stage.Bake,     0.25 },   // 25% — NDVI+PNG
+            { Stage.Show,     0.05 },   // 5%  — отрисовка оверлея
+        };
+        static double Acc(Stage s) => Weights.Where(kv => kv.Key < s).Sum(kv => kv.Value);
+        static int ToOverallPercent(ProgressEvent ev) {
+            double basePart = Acc(ev.stage);
+            double frac = ev.total > 0 ? (double)ev.current / ev.total : 0;
+            double part = Weights.TryGetValue(ev.stage, out var w) ? w : 0;
+            double p = (basePart + frac * part) * 100.0;
+            return (int)Math.Clamp(Math.Round(p), 0, 100);
+        }
+
+
+
+        // -------------------------------------------------------
 
         private record HeatPoint(double lat, double lon, double weight);
 
@@ -43,7 +71,12 @@ namespace NASA_Space_Apps_Challenge {
             <script src='https://maps.googleapis.com/maps/api/js?key={apiKey}&libraries=visualization&language=en'></script>
             </head>
 
-            <div style=""position:absolute;right:12px;bottom:12px;z-index:5;
+            
+
+
+            <body>
+
+<div style=""position:absolute;right:12px;bottom:12px;z-index:5;
                         padding:6px 10px;border-radius:8px;background:rgba(32,32,32,.6);color:#fff;
                         font:12px system-ui"">
               <div style=""margin-bottom:4px"">Bloom intensity (low→high):</div>
@@ -55,7 +88,6 @@ namespace NASA_Space_Apps_Challenge {
             </div>
 
 
-            <body>
             <div id='map'></div>
 
             <div class='ctl'>
@@ -165,79 +197,299 @@ namespace NASA_Space_Apps_Challenge {
         public BBox box = new BBox(5.70, 52.60, 5.90, 52.75);
 
         public LocalBloomForm() {
+
             InitializeComponent();
+
+            pbStatus.Minimum = 0;
+            pbStatus.Maximum = 100;
+            pbStatus.Value = 0;
+            pbStatus.Text = "idle";
+
+
+            this.FormClosing += (s, e) => { if (_listener != null) _listener.Stop(); };
+            this.Shown += (s, e) => { OpenMap(); };
+
+
         }
 
         // ------------------------------------------------------------
         // UI 
         // ------------------------------------------------------------
 
+        //private async void button1_Click(object sender, EventArgs e) {
+        //    try {
+        //        // 1) STAC-поиск HLS (HLSS30 + HLSL30) в окне дат
+        //        using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
+        //        http.DefaultRequestHeaders.Authorization =
+        //            new AuthenticationHeaderValue("Bearer", Keys.EARTH_LOGIN_TOKEN);
+        //        var selDate = this.timelineControl1.Current;
+        //        var start = new DateTime(selDate.Year, selDate.Month, selDate.Day, 0, 0, 0, DateTimeKind.Utc);
+        //        var endExcl = new DateTime(selDate.Year, selDate.Month, selDate.Day, 23, 59, 0, DateTimeKind.Utc);
+
+        //        var body = new {
+        //            collections = new[] { "HLSS30.v2.0", "HLSL30.v2.0" },
+        //            bbox = box.ToArray(),
+        //            datetime = $"{start:yyyy-MM-ddTHH:mm:ssZ}/{endExcl:yyyy-MM-ddTHH:mm:ssZ}",
+        //            limit = 200
+        //        };
+        //        var req = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        //        var resp = await http.PostAsync("https://cmr.earthdata.nasa.gov/stac/LPCLOUD/search", req);
+        //        var respText = await resp.Content.ReadAsStringAsync();
+        //        resp.EnsureSuccessStatusCode();
+        //        /******************************************************************************************************/
+        //        var hrefs = new List<(string id, string url, string band)>();
+        //        using (var doc = JsonDocument.Parse(respText)) {
+        //            foreach (var f in doc.RootElement.GetProperty("features").EnumerateArray()) {
+        //                var id = f.GetProperty("id").GetString()!;
+        //                var assets = f.GetProperty("assets"); foreach (var band in new[] { "B03", "B04", "B08", "B05", "Fmask" }) {
+        //                    if (assets.TryGetProperty(band, out var a) && a.TryGetProperty("href", out var href))
+        //                        hrefs.Add((id, href.GetString()!, band));
+        //                }
+        //            }
+        //        }
+
+        //        if (hrefs.Count == 0) {
+        //            MessageBox.Show("STAC: не найдено ни одной сцены/полосы для заданного bbox/дат.");
+        //            return;
+        //        }
+
+        //        // 2) Клипим несколько сцен (B03/B04/NIR/Fmask) — файлы появятся в data\clips\
+        //        await ClipFewScenesAsync(hrefs);
+
+        //        var clipsDir = Path.Combine("data", "clips");
+        //        var tifCount = Directory.Exists(clipsDir)
+        //            ? Directory.GetFiles(clipsDir, "*.tif").Length
+        //            : 0;
+
+        //        // 3) Для первой сцены считаем heat-точки и сохраняем json (проверка пайплайна)
+        //        var firstId = hrefs.Select(h => h.id).First();
+        //        var heatPts = BuildHeat(firstId);
+        //        var heatJsonPath = Path.Combine(clipsDir, $"{firstId}_heat.json");
+        //        System.IO.File.WriteAllText(heatJsonPath, ToHeatmapJson(heatPts));
+
+
+        //        // после клипа — рисуем первый overlay
+        //        await ShowOverlayForFirstSceneAsync();
+
+        //        MessageBox.Show(
+        //            $"Готово.\nКлипов: {tifCount}\nПервая сцена: {firstId}\nHeat points: {heatPts.Count}\nJSON: {heatJsonPath}");
+        //    }
+        //    catch (Exception ex) {
+        //        MessageBox.Show("Ошибка теста клипов:\n" + ex);
+        //    }
+        //}
+
+
         private async void button1_Click(object sender, EventArgs e) {
+            button1.Enabled = false;
+            //btnCancel.Enabled = true;
+            pbStatus.Value = 0;
+            lStatus.Text = "starting…";
+
+            _cts = new CancellationTokenSource();
+
+            var ui = new Progress<ProgressEvent>(ev => {
+                pbStatus.Value = ToOverallPercent(ev);
+                // короткий статус: Stage N/N — note
+                lStatus.Text = $"{ev.stage} {ev.current}/{ev.total}  {ev.note}";
+            });
+
             try {
-                // 1) STAC-поиск HLS (HLSS30 + HLSL30) в окне дат
-                using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
-                http.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer", EARTH_LOGIN_TOKEN);
-
-                var start = new DateTime(2025, 6, 1, 0, 0, 0, DateTimeKind.Utc);
-                var endExcl = new DateTime(2025, 6, 3, 0, 0, 0, DateTimeKind.Utc);
-
-                var body = new {
-                    collections = new[] { "HLSS30.v2.0", "HLSL30.v2.0" },
-                    bbox = box.ToArray(),
-                    datetime = $"{start:yyyy-MM-ddTHH:mm:ssZ}/{endExcl:yyyy-MM-ddTHH:mm:ssZ}",
-                    limit = 200
-                };
-                var req = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-                var resp = await http.PostAsync("https://cmr.earthdata.nasa.gov/stac/LPCLOUD/search", req);
-                var respText = await resp.Content.ReadAsStringAsync();
-                resp.EnsureSuccessStatusCode();
-
-                var hrefs = new List<(string id, string url, string band)>();
-                using (var doc = JsonDocument.Parse(respText)) {
-                    foreach (var f in doc.RootElement.GetProperty("features").EnumerateArray()) {
-                        var id = f.GetProperty("id").GetString()!;
-                        var assets = f.GetProperty("assets");
-                        foreach (var band in new[] { "B03", "B04", "B08", "B05", "Fmask" }) {
-                            if (assets.TryGetProperty(band, out var a) && a.TryGetProperty("href", out var href))
-                                hrefs.Add((id, href.GetString()!, band));
-                        }
-                    }
-                }
-
-                if (hrefs.Count == 0) {
-                    MessageBox.Show("STAC: не найдено ни одной сцены/полосы для заданного bbox/дат.");
-                    return;
-                }
-
-                // 2) Клипим несколько сцен (B03/B04/NIR/Fmask) — файлы появятся в data\clips\
-                await ClipFewScenesAsync(hrefs);
-
-                var clipsDir = Path.Combine("data", "clips");
-                var tifCount = Directory.Exists(clipsDir)
-                    ? Directory.GetFiles(clipsDir, "*.tif").Length
-                    : 0;
-
-                // 3) Для первой сцены считаем heat-точки и сохраняем json (проверка пайплайна)
-                var firstId = hrefs.Select(h => h.id).First();
-                var heatPts = BuildHeat(firstId);
-                var heatJsonPath = Path.Combine(clipsDir, $"{firstId}_heat.json");
-                System.IO.File.WriteAllText(heatJsonPath, ToHeatmapJson(heatPts));
-
-
-                // после клипа — рисуем первый overlay
-                await ShowOverlayForFirstSceneAsync();
-
-                MessageBox.Show(
-                    $"Готово.\nКлипов: {tifCount}\nПервая сцена: {firstId}\nHeat points: {heatPts.Count}\nJSON: {heatJsonPath}");
+                await RunPipelineAsync(ui, _cts.Token);
+                lStatus.Text = "done";
+                pbStatus.Value = 100;
+            }
+            catch (OperationCanceledException) {
+                lStatus.Text = "canceled";
             }
             catch (Exception ex) {
-                MessageBox.Show("Ошибка теста клипов:\n" + ex);
+                lStatus.Text = "error: " + ex.Message;
+            }
+            finally {
+               // btnCancel.Enabled = false;
+                button1.Enabled = true;
+                _cts?.Dispose(); _cts = null;
             }
         }
 
-        private async void bOpenMap_Click(object sender, EventArgs e) {
-            StartLocalHost(5173, GOOGLE_API_KEY);
+        private async Task RunPipelineAsync(IProgress<ProgressEvent> progress, CancellationToken ct) {
+            // --- Search
+            progress.Report(new(Stage.Search, 0, 1, "STAC"));
+            var (hrefs, when) = await SearchAsync(ct);  // см. ниже
+
+            progress.Report(new(Stage.Search, 1, 1, $"found {hrefs.Count} assets @ {when:yyyy-MM-dd}"));
+
+            if (hrefs.Count == 0) {
+                // доводим прогресс до конца и выходим корректно
+                progress.Report(new(Stage.Done, 1, 1, "no assets"));
+                return; // button1_Click попадёт в finally и вернёт UI в норму
+            }
+
+
+
+            ct.ThrowIfCancellationRequested();
+
+            // --- Download + Warp (параллельно с семафором)
+            var wanted = hrefs
+                .GroupBy(a => a.id).Take(4)
+                .SelectMany(g => g.Where(a => a.band is "B03" or "B04" or "B08" or "B05" or "Fmask"))
+                .ToList();
+
+            int total = wanted.Count;
+            int dlDone = 0;
+            int wpDone = 0;
+
+            await ClipFewScenesWithProgressAsync(
+                wanted,
+                onDownload: (id, band, done) => {
+                    Interlocked.Exchange(ref dlDone, done);
+                    progress.Report(new(Stage.Download, dlDone, total, $"{id}/{band}"));
+                },
+                onWarp: (id, band, done) => {
+                    Interlocked.Exchange(ref wpDone, done);
+                    progress.Report(new(Stage.Warp, wpDone, total, $"{id}/{band}"));
+                },
+                ct: ct);
+
+            ct.ThrowIfCancellationRequested();
+
+            // --- Bake PNG (NDVI)
+            var firstId = hrefs.Select(h => h.id).First();
+            progress.Report(new(Stage.Bake, 0, 3, firstId));
+            var pngPath = await BuildNdviOverlayPngForId(firstId); // твоя функция
+            progress.Report(new(Stage.Bake, 3, 3, System.IO.Path.GetFileName(pngPath)));
+
+            // --- Show
+            progress.Report(new(Stage.Show, 0, 1, "overlay"));
+            await ShowOverlayForFirstSceneAsync();
+            progress.Report(new(Stage.Done, 1, 1, "done"));
+        }
+
+        private async Task<(List<(string id, string url, string band)> hrefs, DateTime day)>
+    SearchAsync(CancellationToken ct) {
+            using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Keys.EARTH_LOGIN_TOKEN);
+
+            var selDate = this.timelineControl1.Current;
+            var start = new DateTime(selDate.Year, selDate.Month, selDate.Day, 0, 0, 0, DateTimeKind.Utc);
+            var endExcl = new DateTime(selDate.Year, selDate.Month, selDate.Day, 23, 59, 0, DateTimeKind.Utc);
+
+            var body = new {
+                collections = new[] { "HLSS30.v2.0", "HLSL30.v2.0" },
+                bbox = box.ToArray(),
+                datetime = $"{start:yyyy-MM-ddTHH:mm:ssZ}/{endExcl:yyyy-MM-ddTHH:mm:ssZ}",
+                limit = 200
+            };
+            var req = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+            using var resp = await http.PostAsync("https://cmr.earthdata.nasa.gov/stac/LPCLOUD/search", req, ct);
+            var respText = await resp.Content.ReadAsStringAsync(ct);
+            resp.EnsureSuccessStatusCode();
+
+            var hrefs = new List<(string id, string url, string band)>();
+            using var doc = JsonDocument.Parse(respText);
+            foreach (var f in doc.RootElement.GetProperty("features").EnumerateArray()) {
+                var id = f.GetProperty("id").GetString()!;
+                var assets = f.GetProperty("assets");
+                foreach (var band in new[] { "B03", "B04", "B08", "B05", "Fmask" })
+                    if (assets.TryGetProperty(band, out var a) && a.TryGetProperty("href", out var href))
+                        hrefs.Add((id, href.GetString()!, band));
+            }
+            return (hrefs, start);
+        }
+
+
+        private async Task ClipFewScenesWithProgressAsync(
+    List<(string id, string url, string band)> assets,
+    Action<string, string, int> onDownload,
+    Action<string, string, int> onWarp,
+    CancellationToken ct) {
+            Directory.CreateDirectory(ClipsDir);
+            var gdalRoot = Path.Combine(AppContext.BaseDirectory, "release-1930-x64-gdal-3-11-3-mapserver-8-4-0");
+            var warpExe = ResolveGdalApp(gdalRoot, "gdalwarp.exe");
+
+            var sem = new SemaphoreSlim(3);
+            int idx = 0;
+
+            var tasks = assets.Select(async a => {
+                await sem.WaitAsync(ct);
+                try {
+                    ct.ThrowIfCancellationRequested();
+
+                    var fileName = $"{a.id}_{a.band}.tif".Replace('/', '_').Replace('\\', '_');
+                    var outTifAbs = Path.Combine(ClipsDir, fileName);
+
+                    // download (отчёт “поштучно”, без байтов — достаточно честно)
+                    onDownload(a.id, a.band, Interlocked.Increment(ref idx));
+
+                    if (!File.Exists(outTifAbs)) {
+                        // warp — самое долгое; регистрируем отмену → Kill()
+                        await RunGdalWarpAsync_Cancellable(
+                            gdalRoot, warpExe,
+                            a.url, outTifAbs,
+                            box.MinLon, box.MinLat, box.MaxLon, box.MaxLat,
+                            Keys.EARTH_LOGIN_TOKEN, 768, ct);
+                    }
+
+                    onWarp(a.id, a.band, idx);
+                }
+                finally { sem.Release(); }
+            });
+
+            await Task.WhenAll(tasks);
+        }
+
+
+        private async Task<string> RunGdalWarpAsync_Cancellable(
+    string gdalRoot, string exePath, string url, string outTif,
+    double minLon, double minLat, double maxLon, double maxLat,
+    string earthToken, int outWidth, CancellationToken ct) {
+            string binDir = Path.Combine(gdalRoot, "bin");
+            string gdalData = ResolveGdalDataDir(gdalRoot);
+            string projDir = ResolveProjDir(gdalRoot);
+
+            string srcLocal = await DownloadWithBearerAsync(url, earthToken);  // можно тоже сделать отменяемым
+
+            try {
+                var args =
+                  $"--config GDAL_DATA \"{gdalData}\" --config PROJ_LIB \"{projDir}\" " +
+                  $"--config GDAL_DISABLE_READDIR_ON_OPEN YES --config VSI_CACHE TRUE " +
+                  $"-t_srs EPSG:4326 -te_srs EPSG:4326 -te {minLon} {minLat} {maxLon} {maxLat} " +
+                  $"-ts {outWidth} 0 -r cubic -multi -wo NUM_THREADS=ALL_CPUS -of GTiff " +
+                  $@"""{srcLocal}"" ""{outTif}""";
+
+                var psi = new System.Diagnostics.ProcessStartInfo(exePath, args) {
+                    UseShellExecute = false,
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true,
+                    WorkingDirectory = binDir
+                };
+                psi.Environment["PATH"] = binDir + ";" + (Environment.GetEnvironmentVariable("PATH") ?? "");
+                psi.Environment["PROJ_LIB"] = projDir;
+                psi.Environment["GDAL_DATA"] = gdalData;
+
+                using var p = System.Diagnostics.Process.Start(psi)!;
+                using var _ = ct.Register(() => { try { if (!p.HasExited) p.Kill(); } catch { } });
+
+                var stdTask = p.StandardOutput.ReadToEndAsync();
+                var errTask = p.StandardError.ReadToEndAsync();
+
+                await Task.Run(() => p.WaitForExit(), ct); // уважает токен (через Kill)
+                if (p.ExitCode != 0) {
+                    var err = await errTask;
+                    throw new Exception(err);
+                }
+                return outTif;
+            }
+            finally {
+                try { System.IO.File.Delete(srcLocal); } catch { }
+            }
+        }
+
+
+        private async void OpenMap() {
+
+            StartLocalHost(5173, Keys.GOOGLE_API_KEY);
+
             await webView21.EnsureCoreWebView2Async();
 
             webView21.CoreWebView2.NavigationCompleted += async (_, __) => {
@@ -248,21 +500,21 @@ namespace NASA_Space_Apps_Challenge {
                 System.Diagnostics.Debug.WriteLine($"[WebView2] {a.WebMessageAsJson}");
 
             webView21.CoreWebView2.Navigate("http://localhost:5173/");
+
         }
 
         private void StartLocalHost(int port, string apiKey) {
 
-           if(_listener!=null) _listener.Stop();
+            if (_listener != null) { try { _listener.Stop(); _listener.Close(); } catch { } }
 
             _listener = new HttpListener();
             _listener.Prefixes.Add($"http://localhost:{port}/");
             _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             _listener.Start();
 
-            string clips = Path.Combine(AppContext.BaseDirectory, "data", "clips");
-
             _ = Task.Run(async () => {
                 while (_listener.IsListening) {
+
                     var ctx = await _listener.GetContextAsync();
                     var path = ctx.Request.Url!.AbsolutePath.TrimStart('/');
 
@@ -276,7 +528,7 @@ namespace NASA_Space_Apps_Challenge {
                         continue;
                     }
 
-                    var local = Path.Combine(clips, path.Replace('/', Path.DirectorySeparatorChar));
+                    var local = Path.Combine(ClipsDir, path.Replace('/', Path.DirectorySeparatorChar));
                     if (File.Exists(local)) {
                         var bytes = await File.ReadAllBytesAsync(local);
                         ctx.Response.ContentType = GetContentType(local);
@@ -316,33 +568,7 @@ namespace NASA_Space_Apps_Challenge {
             return outJson;
         }
 
-        // Sending bbox and heat to WebView2
-        private async Task ShowHeatAsync(string apiKey) {
-            // HTML in WebView2
-            await webView21.EnsureCoreWebView2Async();
-            webView21.CoreWebView2.NavigateToString(MapHtml(apiKey));
 
-            // wait for page loading and push data
-            webView21.CoreWebView2.NavigationCompleted += (_, __) => {
-                // bbox region
-                var bboxMsg = System.Text.Json.JsonSerializer.Serialize(new {
-                    type = "bbox",
-                    box.MinLon,
-                    box.MinLat,
-                    box.MaxLon,
-                    box.MaxLat
-                });
-                webView21.CoreWebView2.PostWebMessageAsString(bboxMsg);
-
-                // first id and his heat
-                var id = PickFirstId();
-                var heatPath = EnsureHeatForId(id);
-                var pointsJson = File.ReadAllText(heatPath);
-
-                var heatMsg = $"{{\"type\":\"heat\",\"points\":{pointsJson}}}";
-                webView21.CoreWebView2.PostWebMessageAsString(heatMsg);
-            };
-        }
 
         private short[,] ReadTiff16(string path) {
             using var image = BitMiracle.LibTiff.Classic.Tiff.Open(path, "r");
@@ -484,83 +710,6 @@ namespace NASA_Space_Apps_Challenge {
             return System.Text.Json.JsonSerializer.Serialize(arr);
         }
 
-        // Ищем, где лежит proj.db (поддерживаем обе раскладки из GISInternals)
-        private string ResolveProjDir(string gdalRoot) {
-            var candidates = new[]
-            {
-        Path.Combine(gdalRoot, "share", "proj"),
-        Path.Combine(gdalRoot, "share", "proj9"),
-        Path.Combine(gdalRoot, "bin",   "proj",  "share"),
-        Path.Combine(gdalRoot, "bin",   "proj9", "share"),
-    };
-            foreach (var dir in candidates)
-                if (System.IO.File.Exists(Path.Combine(dir, "proj.db")))
-                    return dir;
-
-            throw new Exception(
-                $"Не найден proj.db ни в одном из кандидатов:\n{string.Join("\n", candidates)}");
-        }
-
-        // Ищем GDAL-data(у GISInternals чаще всего bin\gdal-data, но бывает share\gdal)
-        private string ResolveGdalDataDir(string gdalRoot) {
-            var candidates = new[]
-            {
-                Path.Combine(gdalRoot, "bin",   "gdal-data"),
-                Path.Combine(gdalRoot, "share", "gdal"),
-            };
-            foreach (var dir in candidates)
-                if (Directory.Exists(dir))
-                    return dir;
-
-            throw new Exception(
-                $"Не найден каталог GDAL_DATA ни в одном из кандидатов:\n{string.Join("\n", candidates)}");
-        }
-
-        // separable 3x3 [1,2,1]/4, учитывает NaN и не «размывает» в пустоту
-        private static float[] Blur3x3NaNAware(float[] src, int w, int h, int passes = 1) {
-            var tmp = new float[w * h];
-            var dst = new float[w * h];
-            Array.Copy(src, dst, src.Length);
-
-            for (int p = 0; p < passes; p++) {
-                // горизонталь
-                for (int y = 0; y < h; y++) {
-                    int row = y * w;
-                    for (int x = 0; x < w; x++) {
-                        double sum = 0, wsum = 0;
-
-                        void acc(int ix, double wgt) {
-                            if (ix < 0 || ix >= w) return;
-                            float v = dst[row + ix];
-                            if (float.IsFinite(v)) { sum += v * wgt; wsum += wgt; }
-                        }
-
-                        acc(x - 1, 1); acc(x, 2); acc(x + 1, 1);
-                        tmp[row + x] = wsum > 0 ? (float)(sum / wsum) : float.NaN;
-                    }
-                }
-
-                // вертикаль
-                for (int y = 0; y < h; y++) {
-                    for (int x = 0; x < w; x++) {
-                        double sum = 0, wsum = 0;
-
-                        void acc(int iy, double wgt) {
-                            if (iy < 0 || iy >= h) return;
-                            float v = tmp[iy * w + x];
-                            if (float.IsFinite(v)) { sum += v * wgt; wsum += wgt; }
-                        }
-
-                        acc(y - 1, 1); acc(y, 2); acc(y + 1, 1);
-                        src[y * w + x] = wsum > 0 ? (float)(sum / wsum) : float.NaN;
-                    }
-                }
-
-                Array.Copy(src, dst, src.Length);
-            }
-            return dst;
-        }
-
         private async Task<string> RunGdalWarpAsync(
             string gdalRoot, string exePath, string url, string outTif,
             double minLon, double minLat, double maxLon, double maxLat,
@@ -611,10 +760,10 @@ namespace NASA_Space_Apps_Challenge {
         private string ResolveGdalApp(string gdalRoot, string appExe) {
             var candidates = new[]
             {
-        Path.Combine(gdalRoot, "gdal", "apps", appExe),
-        Path.Combine(gdalRoot, "bin",  "gdal", "apps", appExe),
-        Path.Combine(gdalRoot, "bin",  appExe),
-    };
+                Path.Combine(gdalRoot, "gdal", "apps", appExe),
+                Path.Combine(gdalRoot, "bin",  "gdal", "apps", appExe),
+                Path.Combine(gdalRoot, "bin",  appExe),
+            };
             var found = candidates.FirstOrDefault(System.IO.File.Exists);
             if (found == null)
                 throw new FileNotFoundException($"{appExe} not found", string.Join(Environment.NewLine, candidates));
@@ -622,6 +771,7 @@ namespace NASA_Space_Apps_Challenge {
         }
 
         private async Task<string> DownloadWithBearerAsync(string url, string token) {
+
             string tmp = Path.Combine(Path.GetTempPath(), "hls_" + Guid.NewGuid().ToString("N") + ".tif");
             using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true, AutomaticDecompression = DecompressionMethods.All });
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -630,6 +780,7 @@ namespace NASA_Space_Apps_Challenge {
             await using var fs = System.IO.File.Create(tmp);
             await resp.Content.CopyToAsync(fs);
             return tmp; // не удаляем сразу – удалим после warp/ошибки
+
         }
 
         private async Task ClipFewScenesAsync(IEnumerable<(string id, string url, string band)> assets) {
@@ -658,7 +809,7 @@ namespace NASA_Space_Apps_Challenge {
                             gdalRoot, warpExe,
                             a.url, outTifAbs,           // <-- абсолютный
                              box.MinLon, box.MinLat, box.MaxLon, box.MaxLat,
-                            EARTH_LOGIN_TOKEN, 768);
+                            Keys.EARTH_LOGIN_TOKEN, 768);
                 }
                 finally { sem.Release(); }
             });
@@ -675,7 +826,7 @@ namespace NASA_Space_Apps_Challenge {
 
             var msg = JsonSerializer.Serialize(new {
                 type = "overlay",
-                url = Path.GetFileName(pngPath),  // статика отдаётся из /data/clips
+                url = "/" + Path.GetFileName(pngPath),  // статика отдаётся из /data/clips
                 bbox = box.ToArray()
             });
             webView21.CoreWebView2.PostWebMessageAsString(msg);
@@ -701,8 +852,6 @@ namespace NASA_Space_Apps_Challenge {
             if (N.GetLength(0) != h || N.GetLength(1) != w) throw new Exception("размеры полос не совпадают");
 
             // параметры визуалки
-
-
 
             // “инфракрасный” градиент (t∈[0..1]): синий→циан→зелёный→жёлтый→оранж→красный
             var ramp = new[]
@@ -810,6 +959,42 @@ namespace NASA_Space_Apps_Challenge {
             return outPng;
         }
 
+
+        // --------------------------------------------------------------------------------------
+        // Helpers
+        // --------------------------------------------------------------------------------------
+
+        private string ResolveProjDir(string gdalRoot) {
+            var candidates = new[]
+            {
+                Path.Combine(gdalRoot, "share", "proj"),
+                Path.Combine(gdalRoot, "share", "proj9"),
+                Path.Combine(gdalRoot, "bin",   "proj",  "share"),
+                Path.Combine(gdalRoot, "bin",   "proj9", "share"),
+            };
+
+            foreach (var dir in candidates)
+                if (System.IO.File.Exists(Path.Combine(dir, "proj.db")))
+                    return dir;
+
+            throw new Exception(
+                $"Не найден proj.db ни в одном из кандидатов:\n{string.Join("\n", candidates)}");
+        }
+
+        private string ResolveGdalDataDir(string gdalRoot) {
+            var candidates = new[]
+            {
+                Path.Combine(gdalRoot, "bin",   "gdal-data"),
+                Path.Combine(gdalRoot, "share", "gdal"),
+            };
+            foreach (var dir in candidates)
+                if (Directory.Exists(dir))
+                    return dir;
+
+            throw new Exception(
+                $"Не найден каталог GDAL_DATA ни в одном из кандидатов:\n{string.Join("\n", candidates)}");
+        }
+
         private static string GetContentType(string path) => Path.GetExtension(path).ToLower() switch {
             ".png" => "image/png",
             ".jpg" => "image/jpeg",
@@ -820,9 +1005,49 @@ namespace NASA_Space_Apps_Challenge {
             _ => "text/html; charset=utf-8"
         };
 
-        // --------------------------------------------------------------------------------------
-        // Helpers
-        // --------------------------------------------------------------------------------------
+        private static float[] Blur3x3NaNAware(float[] src, int w, int h, int passes = 1) {
+            var tmp = new float[w * h];
+            var dst = new float[w * h];
+            Array.Copy(src, dst, src.Length);
+
+            for (int p = 0; p < passes; p++) {
+                // горизонталь
+                for (int y = 0; y < h; y++) {
+                    int row = y * w;
+                    for (int x = 0; x < w; x++) {
+                        double sum = 0, wsum = 0;
+
+                        void acc(int ix, double wgt) {
+                            if (ix < 0 || ix >= w) return;
+                            float v = dst[row + ix];
+                            if (float.IsFinite(v)) { sum += v * wgt; wsum += wgt; }
+                        }
+
+                        acc(x - 1, 1); acc(x, 2); acc(x + 1, 1);
+                        tmp[row + x] = wsum > 0 ? (float)(sum / wsum) : float.NaN;
+                    }
+                }
+
+                // вертикаль
+                for (int y = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++) {
+                        double sum = 0, wsum = 0;
+
+                        void acc(int iy, double wgt) {
+                            if (iy < 0 || iy >= h) return;
+                            float v = tmp[iy * w + x];
+                            if (float.IsFinite(v)) { sum += v * wgt; wsum += wgt; }
+                        }
+
+                        acc(y - 1, 1); acc(y, 2); acc(y + 1, 1);
+                        src[y * w + x] = wsum > 0 ? (float)(sum / wsum) : float.NaN;
+                    }
+                }
+
+                Array.Copy(src, dst, src.Length);
+            }
+            return dst;
+        }
 
         private struct Stop {
             public double v;
@@ -852,6 +1077,9 @@ namespace NASA_Space_Apps_Challenge {
             int iHi = (int)Math.Clamp(Math.Round((pHi / 100.0) * (n - 1)), 0, n - 1);
             return (buf[iLo], buf[iHi] > buf[iLo] ? buf[iHi] : buf[iLo] + 1e-6);
         }
+
+
+
     }
 }
 
