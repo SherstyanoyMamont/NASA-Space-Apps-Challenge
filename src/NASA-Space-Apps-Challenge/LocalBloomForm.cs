@@ -51,8 +51,6 @@ namespace NASA_Space_Apps_Challenge {
             return (int)Math.Clamp(Math.Round(p), 0, 100);
         }
 
-        record ClipParams((double lo, double hi) clip, Stop[] ramp, double gamma);
-        static readonly Dictionary<string, ClipParams> _clipCache = new(); // key = $"{BboxKey(b)}|{DateKey(day)}"
 
 
         // -------------------------------------------------------
@@ -138,7 +136,7 @@ namespace NASA_Space_Apps_Challenge {
 
                 <script>
 
-                    const Z_FIXED = 12;
+            
                     let map, overlay, heatLayer;
                     let pendingOpacity = parseFloat(localStorage.getItem('ndviOpacity') || '0.55');
                     let tileVersion = 1;          // для инвалидации кэша (?v=)
@@ -225,12 +223,14 @@ function flashSelected() {
 
 
                    // ---------- управление тайловым слоем + опацити ----------
-         function applyOpacityToTiles() {
-  const root = map.getDiv();
-  const imgs = root.querySelectorAll('img[src*=""/grid/""]');
-  imgs.forEach(img => { img.style.opacity = pendingOpacity.toFixed(2); });
-}
+                    function applyOpacityToTiles() {
 
+                        // все <img> текущего тайл-слоя
+                        const root = map.getDiv();
+                        const imgs = root.querySelectorAll('img[src*=""/z/""]');
+                        imgs.forEach(img => { img.style.opacity = pendingOpacity.toFixed(2); });
+
+                    }
 
 
                     // helper: объединённые границы по диапазону тайлов
@@ -255,46 +255,25 @@ function addTileLayer(bboxKey, dateKey) {
     heatLayer = null;
   }
 
-  heatLayer = new google.maps.ImageMapType({
-    tileSize: new google.maps.Size(256, 256),
-    getTileUrl: (coord, zoom) => {
-      // нормализуем текущие координаты
-      const n = 1 << zoom;
-      const x = ((coord.x % n) + n) % n;
-      const y = coord.y;
-      if (y < 0 || y >= n) return null;
-
-      // пересчёт в координаты фикс-уровня
-      const nf = 1 << Z_FIXED;
-      const dz = zoom - Z_FIXED;
-      let xf, yf;
-
-      if (dz >= 0) {
-        const scale = 1 << dz;                 // несколько мелких → один крупный
-        xf = Math.floor(x / scale);
-        yf = Math.floor(y / scale);
-      } else {
-        const mul = 1 << (-dz);                // один крупный → несколько мелких (дублируем)
-        xf = x * mul;
-        yf = y * mul;
-      }
-
-      xf = ((xf % nf) + nf) % nf;
-      if (yf < 0 || yf >= nf) return null;
-
-      // URL БЕЗ z: кладём в /grid/xf/yf.png
-      return `/${bboxKey}/${dateKey}/grid/${xf}/${yf}.png?v=${tileVersion}`;
-    }
-  });
+heatLayer = new google.maps.ImageMapType({
+  tileSize: new google.maps.Size(256, 256),
+  getTileUrl: (coord, zoom) => {
+    const n = 1 << zoom;
+    const x = ((coord.x % n) + n) % n;
+    const y = coord.y;
+    if (y < 0 || y >= n) return null;
+    return `/${bboxKey}/${dateKey}/z/${zoom}/${x}/${y}.png?v=${tileVersion}`;
+  }
+});
 
   map.overlayMapTypes.insertAt(0, heatLayer);
 
   // прозрачность — применим к IMG этого слоя
-const applyOpacityToTiles = () => {
-  const root = map.getDiv();
-  const imgs = root.querySelectorAll('img[src*=""/grid/""]');
-  imgs.forEach(img => { img.style.opacity = pendingOpacity.toFixed(2); });
-};
+  const applyOpacityToTiles = () => {
+    const root = map.getDiv();
+    const imgs = root.querySelectorAll('img'); // слой один — ок
+    imgs.forEach(img => { img.style.opacity = pendingOpacity.toFixed(2); });
+  };
 
   google.maps.event.clearListeners(map, 'tilesloaded');
   google.maps.event.addListenerOnce(map, 'tilesloaded', applyOpacityToTiles);
@@ -362,13 +341,16 @@ const applyOpacityToTiles = () => {
                         apply(pendingOpacity);
 
 map.addListener('mousemove', (ev) => {
-  const { x, y } = latLngToTileXY(ev.latLng.lat(), ev.latLng.lng(), Z_FIXED);
-  showTileFrame(Z_FIXED, x, y); // подсветка клетки фикс-сетки
+  const z = map.getZoom();
+  if (z == null) return;
+
+  const { x, y } = latLngToTileXY(ev.latLng.lat(), ev.latLng.lng(), z);
+  showTileFrame(z, x, y);
 
   if (curBboxKey && curDateKey) {
     clearTimeout(bakeTimer);
     bakeTimer = setTimeout(() => {
-      postToHost({ type:'bakeTile', bboxKey:curBboxKey, dateKey:curDateKey, x, y });
+      postToHost({ type:'bakeTile', bboxKey:curBboxKey, dateKey:curDateKey, z, x, y });
     }, 250);
   }
 });
@@ -377,17 +359,19 @@ map.addListener('zoom_changed', () => hideHoverFrame());
 map.addListener('dragstart', () => hideHoverFrame());
 
 map.addListener('rightclick', (ev) => {
-  const { x, y } = latLngToTileXY(ev.latLng.lat(), ev.latLng.lng(), Z_FIXED);
+  const z = map.getZoom();
+  if (z == null) return;
 
-  const dom = ev.domEvent || {};
-  const R = dom.ctrlKey ? 2 : (dom.shiftKey ? 1 : 0);
+  const { x, y } = latLngToTileXY(ev.latLng.lat(), ev.latLng.lng(), z);
+
+  const R = (ev.domEvent || {}).ctrlKey ? 2 : ((ev.domEvent || {}).shiftKey ? 1 : 0);
   const x0 = x - R, x1 = x + R, y0 = y - R, y1 = y + R;
 
-  const rb = tileRangeBounds(Z_FIXED, x0, x1, y0, y1);
+  const rb = tileRangeBounds(z, x0, x1, y0, y1);
   showSelectedFrame(rb);
 
   if (curBboxKey && curDateKey) {
-    postToHost({ type:'bakeRegion', bboxKey:curBboxKey, dateKey:curDateKey, x0, x1, y0, y1 });
+    postToHost({ type:'bakeRegion', bboxKey:curBboxKey, dateKey:curDateKey, z, x0, x1, y0, y1 });
   }
 });
 
@@ -490,51 +474,35 @@ if (!window.__webviewHandlerBound) {
 
 
 
-        private ClipParams EnsureClipParams(DateTime dayUtc, BBox b, string sceneId) {
-            string key = $"{BboxKey(b)}|{DateKey(dayUtc)}";
-            if (_clipCache.TryGetValue(key, out var cp)) return cp;
+    //    private async Task BakeDayFixedGridAsync(
+    //List<(string id, string url, string band)> hrefs,
+    //DateTime utcDay, BBox b,
+    //IProgress<ProgressEvent> progress,
+    //CancellationToken ct) {
+    //        // выбери сцену + посчитай общий NDVI буфер как у тебя
+    //        var id = hrefs.Select(h => h.id).Distinct()
+    //                      .OrderByDescending(s => s.Contains("HLSS30", StringComparison.OrdinalIgnoreCase))
+    //                      .ThenBy(s => s)
+    //                      .First();
 
-            // Быстро считаем перцентили на всем окне (у тебя уже есть готовая функция)
-            var (_, w, h, clipAll, ramp) = BuildNdviBufferForId(sceneId, out _);
-            cp = new ClipParams(clipAll, ramp, GAMMA);
+    //        var (ndviSm, w, h, clip, ramp) = BuildNdviBufferForId(id, out var geoBounds);
 
-            // (опционально) сохранить в manifest.json, чтобы переживало рестарт
-            _clipCache[key] = cp;
-            return cp;
-        }
+    //        var tilesRoot = TilesDir(utcDay, b);
+    //        Directory.CreateDirectory(tilesRoot);
 
+    //        var (xMin, xMax, yMin, yMax) = TilesCoveringBBox(Z_FIXED, b);
+    //        int total = (xMax - xMin + 1) * (yMax - yMin + 1), done = 0;
 
-
-
-        private async Task BakeDayFixedGridAsync(
-    List<(string id, string url, string band)> hrefs,
-    DateTime utcDay, BBox b,
-    IProgress<ProgressEvent> progress,
-    CancellationToken ct) {
-            // выбери сцену + посчитай общий NDVI буфер как у тебя
-            var id = hrefs.Select(h => h.id).Distinct()
-                          .OrderByDescending(s => s.Contains("HLSS30", StringComparison.OrdinalIgnoreCase))
-                          .ThenBy(s => s)
-                          .First();
-
-            var (ndviSm, w, h, clip, ramp) = BuildNdviBufferForId(id, out var geoBounds);
-
-            var tilesRoot = TilesDir(utcDay, b);
-            Directory.CreateDirectory(tilesRoot);
-
-            var (xMin, xMax, yMin, yMax) = TilesCoveringBBox(Z_FIXED, b);
-            int total = (xMax - xMin + 1) * (yMax - yMin + 1), done = 0;
-
-            for (int x = xMin; x <= xMax; x++)
-                for (int y = yMin; y <= yMax; y++) {
-                    ct.ThrowIfCancellationRequested();
-                    string outAbs = TilePath(tilesRoot, x, y);
-                    if (!File.Exists(outAbs))
-                        RenderTileFromNdvi(ndviSm, w, h, geoBounds, clip, ramp, GAMMA, outAbs, Z_FIXED, x, y);
-                    if ((++done % 20) == 0)
-                        progress.Report(new(Stage.Bake, done, total, $"grid {done}/{total}"));
-                }
-        }
+    //        for (int x = xMin; x <= xMax; x++)
+    //            for (int y = yMin; y <= yMax; y++) {
+    //                ct.ThrowIfCancellationRequested();
+    //                string outAbs = TilePath(tilesRoot, x, y);
+    //                if (!File.Exists(outAbs))
+    //                    RenderTileFromNdvi(ndviSm, w, h, geoBounds, clip, ramp, GAMMA, outAbs, Z_FIXED, x, y);
+    //                if ((++done % 20) == 0)
+    //                    progress.Report(new(Stage.Bake, done, total, $"grid {done}/{total}"));
+    //            }
+    //    }
 
 
 
@@ -679,8 +647,6 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
 
             // ----- ВЫПЕЧКА ТАЙЛОВ ДЛЯ ВСЕГО ОКНА -----
             progress.Report(new(Stage.Bake, 0, 1, "tiling NDVI…"));
-
-
             await BakeDayTilesAsync(hrefs, dayStartUtc, box, progress, ct);
 
             // фронту достаточно tileLayer из BakeDayTilesAsync, но обновим контекст на всякий
@@ -845,32 +811,27 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
                     var t = tp.GetString();
                     if (t == "bakeTile") {
                         var dateKey = doc.RootElement.GetProperty("dateKey").GetString()!;
+                        var z = doc.RootElement.GetProperty("z").GetInt32();
                         var x = doc.RootElement.GetProperty("x").GetInt32();
                         var y = doc.RootElement.GetProperty("y").GetInt32();
-                        var day = DateTime.ParseExact(dateKey, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).Date;
+                        var day = DateTime.ParseExact(dateKey, "yyyyMMdd", CultureInfo.InvariantCulture,
+                                                      DateTimeStyles.AssumeUniversal).Date;
 
-                        try {
-                            await BakeSingleTileAsync(day, box, x, y);
-                            webView21.CoreWebView2.PostWebMessageAsString(JsonSerializer.Serialize(new { type = "tileReady", z = Z_FIXED, x, y }));
-                        }
-                        catch (Exception ex) {
-                            webView21.CoreWebView2.PostWebMessageAsString(JsonSerializer.Serialize(new { type = "tileError", z = Z_FIXED, x, y, err = ex.Message }));
-                        }
+                        await BakeSingleTileAsync(day, box, z, x, y);
+                        webView21.CoreWebView2.PostWebMessageAsString(
+                            JsonSerializer.Serialize(new { type = "tileReady", z, x, y }));
                     }
                     else if (t == "bakeRegion") {
                         var dateKey = doc.RootElement.GetProperty("dateKey").GetString()!;
+                        var z = doc.RootElement.GetProperty("z").GetInt32();
                         int x0 = doc.RootElement.GetProperty("x0").GetInt32();
                         int x1 = doc.RootElement.GetProperty("x1").GetInt32();
                         int y0 = doc.RootElement.GetProperty("y0").GetInt32();
                         int y1 = doc.RootElement.GetProperty("y1").GetInt32();
-                        var day = DateTime.ParseExact(dateKey, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).Date;
+                        var day = DateTime.ParseExact(dateKey, "yyyyMMdd", CultureInfo.InvariantCulture,
+                                                      DateTimeStyles.AssumeUniversal).Date;
 
-                        try {
-                            await BakeRegionAsync(day, box, x0, x1, y0, y1);
-                        }
-                        catch (Exception ex) {
-                            webView21.CoreWebView2.PostWebMessageAsString(JsonSerializer.Serialize(new { type = "tileError", z = Z_FIXED, err = ex.Message }));
-                        }
+                        await BakeRegionAsync(day, box, z, x0, x1, y0, y1);
                     }
                 }
                 catch (Exception ex) {
@@ -884,11 +845,11 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
         }
 
 
-        private async Task BakeRegionAsync(DateTime utcDay, BBox viewBbox, int x0, int x1, int y0, int y1) {
+        private async Task BakeRegionAsync(DateTime utcDay, BBox viewBbox, int z, int x0, int x1, int y0, int y1) {
             var (test, _) = await SearchForDayAsync(utcDay, CancellationToken.None);
             if (test.Count == 0) return;
 
-            int n = 1 << Z_FIXED;
+            int n = 1 << z;
             int _wrapX(int x) => ((x % n) + n) % n;
 
             int yMin = Math.Max(0, Math.Min(y0, y1));
@@ -897,36 +858,58 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
             for (int xi = Math.Min(x0, x1); xi <= Math.Max(x0, x1); xi++) {
                 int X = _wrapX(xi);
                 for (int Y = yMin; Y <= yMax; Y++) {
-                    await BakeSingleTileAsync(utcDay, viewBbox, X, Y);
-                    var msg = JsonSerializer.Serialize(new { type = "tileReady", z = Z_FIXED, x = X, y = Y });
-                    webView21.CoreWebView2.PostWebMessageAsString(msg);
+                    await BakeSingleTileAsync(utcDay, viewBbox, z, X, Y);
+                    webView21.CoreWebView2.PostWebMessageAsString(
+                        JsonSerializer.Serialize(new { type = "tileReady", z, x = X, y = Y }));
                 }
             }
         }
 
-
-
-        private async Task BakeSingleTileAsync(DateTime utcDay, BBox viewBbox, int x, int y) {
+        private async Task BakeSingleTileAsync(DateTime utcDay, BBox viewBbox, int z, int x, int y) {
             var (hrefs, _) = await SearchForDayAsync(utcDay, CancellationToken.None);
             if (hrefs.Count == 0) return;
 
             var sceneId = hrefs.Select(h => h.id).Distinct()
                                .OrderByDescending(s => s.Contains("HLSS30", StringComparison.OrdinalIgnoreCase))
-                               .ThenBy(s => s).First();
+                               .ThenBy(s => s)
+                               .First();
 
-            var tb = TileBounds(Z_FIXED, x, y);
+            var tb = TileBounds(z, x, y);
             var tileBbox = new BBox(tb.minLon, tb.minLat, tb.maxLon, tb.maxLat);
 
             var needed = hrefs.Where(h => h.id == sceneId && (h.band is "B04" or "B08" or "B05" or "Fmask")).ToList();
             await ClipSpecificBBoxAsync(needed, tileBbox);
 
-            // Считаем NDVI для тайлового bbox, НО clip берём общий:
-            var (ndviSm, w, h, _tileClipIgnore, _rampIgnore) = BuildNdviBufferForId_UsingBBox(sceneId, tileBbox);
-            var vis = EnsureClipParams(utcDay, viewBbox, sceneId);
+            var (ndviSm, w, h, clip, ramp) = BuildNdviBufferForId_UsingBBox(sceneId, tileBbox);
 
-            var outAbs = TilePath(TilesDir(utcDay, viewBbox), x, y);
-            RenderTileFromNdvi(ndviSm, w, h, tileBbox, vis.clip, vis.ramp, vis.gamma, outAbs, Z_FIXED, x, y);
+            var outAbs = TilePath(TilesDir(utcDay, viewBbox), z, x, y);
+            RenderTileFromNdvi(ndviSm, w, h, tileBbox, clip, ramp, GAMMA, outAbs, z, x, y);
         }
+
+
+
+
+        //private async Task BakeSingleTileAsync(DateTime utcDay, BBox viewBbox, int x, int y) {
+        //    var (hrefs, _) = await SearchForDayAsync(utcDay, CancellationToken.None);
+        //    if (hrefs.Count == 0) return;
+
+        //    var sceneId = hrefs.Select(h => h.id).Distinct()
+        //                       .OrderByDescending(s => s.Contains("HLSS30", StringComparison.OrdinalIgnoreCase))
+        //                       .ThenBy(s => s)
+        //                       .First();
+
+        //    // тайловые границы ТОЛЬКО уровня Z_FIXED
+        //    var tb = TileBounds(Z_FIXED, x, y);
+        //    var tileBbox = new BBox(tb.minLon, tb.minLat, tb.maxLon, tb.maxLat);
+
+        //    var needed = hrefs.Where(h => h.id == sceneId && (h.band is "B04" or "B08" or "B05" or "Fmask")).ToList();
+        //    await ClipSpecificBBoxAsync(needed, tileBbox);
+
+        //    var (ndviSm, w, h, clip, ramp) = BuildNdviBufferForId_UsingBBox(sceneId, tileBbox);
+
+        //    var outAbs = TilePath(TilesDir(utcDay, viewBbox), x, y);
+        //    RenderTileFromNdvi(ndviSm, w, h, tileBbox, clip, ramp, GAMMA, outAbs, Z_FIXED, x, y);
+        //}
 
 
         private async Task ClipSpecificBBoxAsync(
@@ -1038,7 +1021,6 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
                         ctx.Response.OutputStream.Close();
                     }
                     else {
-
                         ctx.Response.StatusCode = 404;
                         await ctx.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("404"));
                         ctx.Response.OutputStream.Close();
@@ -1553,7 +1535,7 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
 
             var zooms = new List<ZoomRange>();
             for (int z = Z_MIN; z <= Z_MAX; z++) {
-                var (xMin, xMax, yMin, yMax) = TilesCoveringBBox(Z_FIXED, b);
+                var (xMin, xMax, yMin, yMax) = TilesCoveringBBox(z, b);
                 zooms.Add(new ZoomRange(z, xMin, xMax, yMin, yMax));
 
                 int total = (xMax - xMin + 1) * (yMax - yMin + 1);
@@ -1562,7 +1544,7 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
                 for (int x = xMin; x <= xMax; x++) {
                     for (int y = yMin; y <= yMax; y++) {
                         ct.ThrowIfCancellationRequested();
-                        var outAbs = TilePath(tilesRoot, x, y); // оставляй grid/<x>/<y>.png
+                        string outAbs = TilePath(tilesRoot, z, x, y);
                         if (!File.Exists(outAbs)) {
                             RenderTileFromNdvi(ndviSm, w, h, geoBounds, clip, ramp, GAMMA, outAbs, z, x, y);
                         }
@@ -1947,24 +1929,22 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
         }
 
 
-
         private string TilesDir(DateTime utc, BBox b) =>
-            Path.Combine(BakeDir(utc, b), "grid");
+            Path.Combine(BakeDir(utc, b), "z");
 
+        private static string TilePath(string tilesRoot, int z, int x, int y) =>
+            Path.Combine(tilesRoot, z.ToString(), x.ToString(), y.ToString() + ".png");
 
-        private static string TilePath(string tilesRoot, int x, int y) =>
-            Path.Combine(tilesRoot, x.ToString(), y.ToString() + ".png");
-
-        // относительный URL от корня BakesRoot
-        private string TileRelUrl(DateTime utc, BBox b, int z, int x, int y) {
-            string abs = TilePath(TilesDir(utc, b), x, y);
-            return Path.GetRelativePath(BakesRoot, abs).Replace(Path.DirectorySeparatorChar, '/');
-        }
+        //// относительный URL от корня BakesRoot
+        //private string TileRelUrl(DateTime utc, BBox b, int z, int x, int y) {
+        //    string abs = TilePath(TilesDir(utc, b), z, x, y);
+        //    return Path.GetRelativePath(BakesRoot, abs).Replace(Path.DirectorySeparatorChar, '/');
+        //}
 
 
         // ---- Tiles / WebMercator helpers ----
         private const int TILE_SIZE = 256;
-        private const int Z_FIXED = 12;
+
         private const int Z_MIN = 8;   // подстрой по вкусу
         private const int Z_MAX = 14;  // подстрой по вкусу
 
