@@ -2,6 +2,7 @@
 using System.Drawing.Imaging;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -56,110 +57,293 @@ namespace NASA_Space_Apps_Challenge {
 
         private string MapHtml(string apiKey) {
 
-            return $@"
-            <!doctype html><html><head><meta charset='utf-8'>
-            <meta name='viewport' content='width=device-width, initial-scale=1'>
-            <style>
-              html,body,#map{{height:100%;margin:0;padding:0}}
-              .ctl{{position:absolute;top:12px;left:12px;z-index:5;
-                    background:rgba(32,32,32,.65);color:#fff;border-radius:10px;
-                    padding:10px 12px;backdrop-filter:saturate(1.2) blur(2px);
-                    font:14px/1.2 system-ui,Segoe UI,Roboto,Helvetica,Arial}}
-              .ctl input[type=range]{{width:220px}}
-              .ctl .val{{display:inline-block;min-width:36px;text-align:right;margin-left:6px}}
-            </style>
-            <script src='https://maps.googleapis.com/maps/api/js?key={apiKey}&libraries=visualization&language=en'></script>
-            </head>
-
-            
+      
 
 
-            <body>
+            string page = @"<!doctype html>
+<html>
 
-<div style=""position:absolute;right:12px;bottom:12px;z-index:5;
-                        padding:6px 10px;border-radius:8px;background:rgba(32,32,32,.6);color:#fff;
-                        font:12px system-ui"">
-              <div style=""margin-bottom:4px"">Bloom intensity (low→high):</div>
-              <div style=""width:200px;height:10px;
-                          background:linear-gradient(90deg,
-                            #12206e 0%, #1950c8 15%, #1ec0dc 30%, #28aa5a 45%,
-                            #c8d23c 60%, #f0a83c 75%, #eb503c 90%, #b4141e 100%);
-                          border-radius:4px""></div>
-            </div>
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <style>
+        html,
+        body,
+        #map {
+            height: 100%;
+            margin: 0;
+            padding: 0
+        }
+
+        .ctl {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            z-index: 5;
+            background: rgba(32, 32, 32, .65);
+            color: #fff;
+            border-radius: 10px;
+            padding: 10px 12px;
+            backdrop-filter: saturate(1.2) blur(2px);
+            font: 14px/1.2 system-ui, Segoe UI, Roboto, Helvetica, Arial
+        }
+
+        .ctl input[type=range] {
+            width: 220px
+        }
+
+        .ctl .val {
+            display: inline-block;
+            min-width: 36px;
+            text-align: right;
+            margin-left: 6px
+        }
+    </style>
+    <script src='https://maps.googleapis.com/maps/api/js?key={__API_KEY__}&libraries=visualization&language=en'></script>
+</head>
+";
+
+            page.Replace("{__API_KEY__}", apiKey);
+
+            page += @"
+<body>
 
 
-            <div id='map'></div>
+    <div style=""position:absolute;right:12px;bottom:12px;z-index:5;
+            padding:6px 10px;border-radius:8px;background:rgba(32,32,32,.6);color:#fff;
+            font:12px system-ui"">
+        <div style=""margin-bottom:4px"">Bloom intensity (low→high):</div>
+        <div style=""width:200px;height:10px;
+              background:linear-gradient(90deg,
+                #12206e 0%, #1950c8 15%, #1ec0dc 30%, #28aa5a 45%,
+                #c8d23c 60%, #f0a83c 75%, #eb503c 90%, #b4141e 100%);
+              border-radius:4px""></div>
+    </div>
 
-            <div class='ctl'>
-              <label>Bloom map opacity:
-                <input id='op' type='range' min='0' max='1' step='0.01' value='0.55'>
-                <span id='opv' class='val'>0.55</span>
-              </label>
-            </div>
 
-            <script>
-            let map, overlay;
-            let pendingOpacity = parseFloat(localStorage.getItem('ndviOpacity') || '0.55');
+    <div id='map'></div>
 
-            function init(){{
-              map = new google.maps.Map(document.getElementById('map'), {{
-                center:{{lat:52.675,lng:5.80}}, zoom:12, 
 
-              mapTypeId:'hybrid', 
-              mapTypeControl:false, // ""Карта/Спутник""
-              fullscreenControl: false,  // полноэкранный
-              streetViewControl: false,  // ""человечек""
-              zoomControl: false,        // +/- зум
-              rotateControl: false,      // компас/поворот
-              scaleControl: false        // масштаб (внизу)
-              }});
+    <div class='ctl'>
+        <label>Bloom map opacity:
+            <input id='op' type='range' min='0' max='1' step='0.01' value='0.55'>
+            <span id='opv' class='val'>0.55</span>
+        </label>
+    </div>
 
-              const op = document.getElementById('op');
-              const opv = document.getElementById('opv');
 
-              // init UI
-              op.value = pendingOpacity.toFixed(2);
-              opv.textContent = op.value;
+    <script>
+        let map, overlay, heatLayer;
+        let pendingOpacity = parseFloat(localStorage.getItem('ndviOpacity') || '0.55');
+        let tileVersion = 1;          // для инвалидации кэша (?v=)
+        let highlightRect = null;     // рамка выбранного тайла
+        let bakeTimer = null;         // debounce тайл-вычисления
+        let curBboxKey = null;        // текущий набор тайлов
+        let curDateKey = null;
 
-              const apply = (v) => {{
+        // ---------- утилиты тайлов WebMercator ----------
+        function latLngToTileXY(lat, lng, z) {
+            const n = Math.pow(2, z);
+            const x = Math.floor((lng + 180.0) / 360.0 * n);
+            const y = Math.floor((1.0 - Math.log(Math.tan(lat * Math.PI / 180.0) + 1 / Math.cos(lat * Math.PI / 180.0)) / Math.PI) / 2.0 * n);
+            return { x, y }
+        }
+
+        function tileBounds(z, x, y) {
+            const n = Math.pow(2, z);
+            const lon1 = x / n * 360.0 - 180.0;
+            const lat1 = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180.0 / Math.PI;       // north
+            const lon2 = (x + 1) / n * 360.0 - 180.0;
+            const lat2 = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))) * 180.0 / Math.PI; // south
+            return { west: lon1, south: lat2, east: lon2, north: lat1 }
+        }
+
+
+
+        function showTileFrame(z, x, y) {
+
+            const b = tileBounds(z, x, y);
+            const opts = {
+                strokeColor: '#00FFFF',
+                strokeOpacity: 1,
+                strokeWeight: 2,
+                fillOpacity: 0,        // без заливки
+                map,
+                bounds: { north: b.north, south: b.south, east: b.east, west: b.west }
+
+            };
+
+            if (!highlightRect) highlightRect = new google.maps.Rectangle(opts);
+            else highlightRect.setOptions(opts);
+        }
+
+
+        function hideTileFrame() {
+            if (highlightRect) {  highlightRect.setMap(null); highlightRect = null;  }
+        }
+
+
+
+        function postToHost(obj) {
+            try {  window.chrome?.webview?.postMessage(JSON.stringify(obj));  } catch (e) {  console.error(e);  }
+        }
+
+
+        function init() {
+
+            map = new google.maps.Map(
+                document.getElementById('map'),
+                {
+                    center: { lat: 52.675, lng: 5.80 },
+                    zoom: 12,
+                    mapTypeId: 'hybrid',
+                    mapTypeControl: false, fullscreenControl: false, streetViewControl: false,
+                    zoomControl: false, rotateControl: false, scaleControl: false
+                }
+            );
+
+            const op = document.getElementById('op');
+            const opv = document.getElementById('opv');
+
+
+            const apply = (v) => {
                 pendingOpacity = v;
                 localStorage.setItem('ndviOpacity', String(v));
-                if (overlay) overlay.setOpacity(v);
-              }};
+                if (overlay) overlay.setOpacity(v); // старый режим
+                applyOpacityToTiles();              // тайловый режим
+            };
 
-              op.addEventListener('input', () => {{
+            op.value = pendingOpacity.toFixed(2);
+            opv.textContent = op.value;
+
+            op.addEventListener('input', () => {
                 const v = parseFloat(op.value);
                 opv.textContent = v.toFixed(2);
                 apply(v);
-              }});
+            });
 
-              apply(pendingOpacity);
-            }}
-            init();
+            apply(pendingOpacity);
 
-            function addOverlayPng(pngUrl, bbox){{
-              // поддержка и объекта, и массива [minLon, minLat, maxLon, maxLat]
-              const b = Array.isArray(bbox)
-                ? {{ minLon: bbox[0], minLat: bbox[1], maxLon: bbox[2], maxLat: bbox[3] }}
-                : bbox;
+            // наведение мыши → подсветка тайла + дебаунс-запрос на запекание
+            map.addListener('mousemove', (ev) => {
+                const z = map.getZoom();
+                if (curBboxKey == null || curDateKey == null || z == null) return;
+                const { x, y } = latLngToTileXY(ev.latLng.lat(), ev.latLng.lng(), z);
+                showTileFrame(z, x, y);
+                clearTimeout(bakeTimer);
 
-              const imageBounds = {{ south: b.minLat, west: b.minLon, north: b.maxLat, east: b.maxLon }};
-              if (overlay) overlay.setMap(null);
-              overlay = new google.maps.GroundOverlay(pngUrl, imageBounds, {{ opacity: pendingOpacity }});
-              overlay.setMap(map);
-              map.fitBounds(new google.maps.LatLngBounds(
+
+                bakeTimer = setTimeout(() => {
+                    postToHost({ type: 'bakeTile', bboxKey: curBboxKey, dateKey: curDateKey, z, x, y });
+                }, 250);
+            });
+            map.addListener('zoom_changed', () => hideTileFrame());
+            map.addListener('dragstart', () => hideTileFrame());
+        }
+
+
+
+
+
+        init();
+
+        // ---------- управление тайловым слоем + опацити ----------
+        function applyOpacityToTiles() {
+
+            // все <img> текущего тайл-слоя
+            const root = map.getDiv();
+            const imgs = root.querySelectorAll('img[src*=""/z/""]');
+            imgs.forEach(img => { img.style.opacity = pendingOpacity.toFixed(2); });
+
+        }
+
+
+        function addTileLayer(bboxKey, dateKey) {
+
+            curBboxKey = bboxKey;
+            curDateKey = dateKey;
+
+            if (overlay) { overlay.setMap(null); overlay = null; }
+            if (heatLayer) {
+
+                const idx = map.overlayMapTypes.getArray().indexOf(heatLayer);
+                if (idx >= 0) map.overlayMapTypes.removeAt(idx);
+                heatLayer = null;
+
+            }
+            heatLayer = new google.maps.ImageMapType({
+                getTileUrl: (coord, zoom) => {
+                    const n = 1 << zoom;
+                    const x = ((coord.x % n) + n) % n;   // wrap x
+                    const y = coord.y;
+                    if (y < 0 || y >= n) return null;    // за пределами — не запрашиваем
+                    return `/${bboxKey}/${dateKey}/z/${zoom}/${x}/${y}.png?v=${tileVersion}`;
+                }
+            });
+
+
+
+
+            map.overlayMapTypes.insertAt(0, heatLayer);
+            google.maps.event.clearListeners(map, 'tilesloaded');
+            google.maps.event.addListenerOnce(map, 'tilesloaded', applyOpacityToTiles);
+            google.maps.event.addListener(map, 'tilesloaded', applyOpacityToTiles);
+            setTimeout(applyOpacityToTiles, 0);
+        }
+
+        // ---------- (на всякий) режим единого PNG-оверлея ----------
+        function addOverlayPng(pngUrl, bbox) {
+
+            const b = Array.isArray(bbox) ?
+                { minLon: bbox[0], minLat: bbox[1], maxLon: bbox[2], maxLat: bbox[3] } : bbox;
+
+            const imageBounds = {
+                south: b.minLat, west: b.minLon, north: b.maxLat, east: b.maxLon
+            };
+
+            if (overlay) overlay.setMap(null);
+
+            overlay = new google.maps.GroundOverlay(pngUrl, imageBounds, { opacity: pendingOpacity });
+            overlay.setMap(map);
+            map.fitBounds(new google.maps.LatLngBounds(
                 new google.maps.LatLng(imageBounds.south, imageBounds.west),
                 new google.maps.LatLng(imageBounds.north, imageBounds.east)
-              ));
-            }}
+            ));
+        }
 
-            window.chrome?.webview?.addEventListener('message', e => {{
-              try {{
+        // ---------- приём сообщений от хоста ----------
+        window.chrome?.webview?.addEventListener('message', e => {
+            try {
+
                 const msg = JSON.parse(e.data);
                 if (msg.type === 'overlay') addOverlayPng(msg.url, msg.bbox);
-              }} catch(err) {{ console.error(err); }}
-            }});
-            </script></body></html>";
+                else if (msg.type === 'tileLayer') addTileLayer(msg.bboxKey, msg.dateKey);
+                else if (msg.type === 'tileReady') {
+
+                    // инвалидация кэша и мягкое мигание рамкой
+                    tileVersion++;
+                    const arr = map.overlayMapTypes.getArray();
+                    const idx = arr.indexOf(heatLayer);
+                    if (idx >= 0) { { map.overlayMapTypes.removeAt(idx); map.overlayMapTypes.insertAt(idx, heatLayer); } }
+                    if (highlightRect) {
+                        {
+                            const prev = highlightRect.get('strokeColor');
+                            highlightRect.setOptions({ strokeColor: '#FFEA00', strokeWeight: 3 });
+                            setTimeout(() => highlightRect && highlightRect.setOptions({ strokeColor: prev, strokeWeight: 2 }), 180);
+                        }
+                    }
+                }
+            } catch (err) { console.error(err); }
+        });
+    </script>
+</body>
+
+</html>
+
+";
+
+
+            return page;
         }
 
         // Path to the clips
@@ -217,79 +401,13 @@ namespace NASA_Space_Apps_Challenge {
         private async void timelineControl1_DateChanged(object? sender, EventArgs e) {
             var d = timelineControl1.Current;               // DateTime (локальный/UTC — как у тебя)
             var dayUtc = new DateTime(d.Year, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc);
-            if (!await TryShowCachedOverlayAsync(dayUtc, box)) {
-                // нет кэша — можно мягко подсказку в статусе (без автозапуска тяжёлой печки)
+
+
+            if (!await TryShowCachedTilesAsync(dayUtc, box)) {
                 lStatus.Text = "no cache for this day";
                 pbStatus.Value = 0;
             }
         }
-
-        // ------------------------------------------------------------
-        // UI 
-        // ------------------------------------------------------------
-
-        //private async void button1_Click(object sender, EventArgs e) {
-        //    try {
-        //        // 1) STAC-поиск HLS (HLSS30 + HLSL30) в окне дат
-        //        using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
-        //        http.DefaultRequestHeaders.Authorization =
-        //            new AuthenticationHeaderValue("Bearer", Keys.EARTH_LOGIN_TOKEN);
-        //        var selDate = this.timelineControl1.Current;
-        //        var start = new DateTime(selDate.Year, selDate.Month, selDate.Day, 0, 0, 0, DateTimeKind.Utc);
-        //        var endExcl = new DateTime(selDate.Year, selDate.Month, selDate.Day, 23, 59, 0, DateTimeKind.Utc);
-
-        //        var body = new {
-        //            collections = new[] { "HLSS30.v2.0", "HLSL30.v2.0" },
-        //            bbox = box.ToArray(),
-        //            datetime = $"{start:yyyy-MM-ddTHH:mm:ssZ}/{endExcl:yyyy-MM-ddTHH:mm:ssZ}",
-        //            limit = 200
-        //        };
-        //        var req = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        //        var resp = await http.PostAsync("https://cmr.earthdata.nasa.gov/stac/LPCLOUD/search", req);
-        //        var respText = await resp.Content.ReadAsStringAsync();
-        //        resp.EnsureSuccessStatusCode();
-        //        /******************************************************************************************************/
-        //        var hrefs = new List<(string id, string url, string band)>();
-        //        using (var doc = JsonDocument.Parse(respText)) {
-        //            foreach (var f in doc.RootElement.GetProperty("features").EnumerateArray()) {
-        //                var id = f.GetProperty("id").GetString()!;
-        //                var assets = f.GetProperty("assets"); foreach (var band in new[] { "B03", "B04", "B08", "B05", "Fmask" }) {
-        //                    if (assets.TryGetProperty(band, out var a) && a.TryGetProperty("href", out var href))
-        //                        hrefs.Add((id, href.GetString()!, band));
-        //                }
-        //            }
-        //        }
-
-        //        if (hrefs.Count == 0) {
-        //            MessageBox.Show("STAC: не найдено ни одной сцены/полосы для заданного bbox/дат.");
-        //            return;
-        //        }
-
-        //        // 2) Клипим несколько сцен (B03/B04/NIR/Fmask) — файлы появятся в data\clips\
-        //        await ClipFewScenesAsync(hrefs);
-
-        //        var clipsDir = Path.Combine("data", "clips");
-        //        var tifCount = Directory.Exists(clipsDir)
-        //            ? Directory.GetFiles(clipsDir, "*.tif").Length
-        //            : 0;
-
-        //        // 3) Для первой сцены считаем heat-точки и сохраняем json (проверка пайплайна)
-        //        var firstId = hrefs.Select(h => h.id).First();
-        //        var heatPts = BuildHeat(firstId);
-        //        var heatJsonPath = Path.Combine(clipsDir, $"{firstId}_heat.json");
-        //        System.IO.File.WriteAllText(heatJsonPath, ToHeatmapJson(heatPts));
-
-
-        //        // после клипа — рисуем первый overlay
-        //        await ShowOverlayForFirstSceneAsync();
-
-        //        MessageBox.Show(
-        //            $"Готово.\nКлипов: {tifCount}\nПервая сцена: {firstId}\nHeat points: {heatPts.Count}\nJSON: {heatJsonPath}");
-        //    }
-        //    catch (Exception ex) {
-        //        MessageBox.Show("Ошибка теста клипов:\n" + ex);
-        //    }
-        //}
 
 
         private async void button1_Click(object sender, EventArgs e) {
@@ -324,59 +442,7 @@ namespace NASA_Space_Apps_Challenge {
             }
         }
 
-        //private async Task RunPipelineAsync(IProgress<ProgressEvent> progress, CancellationToken ct) {
-        //    // --- Search
-        //    progress.Report(new(Stage.Search, 0, 1, "STAC"));
-        //    var (hrefs, when) = await SearchAsync(ct);  // см. ниже
-
-        //    progress.Report(new(Stage.Search, 1, 1, $"found {hrefs.Count} assets @ {when:yyyy-MM-dd}"));
-
-        //    if (hrefs.Count == 0) {
-        //        // доводим прогресс до конца и выходим корректно
-        //        progress.Report(new(Stage.Done, 1, 1, "no assets"));
-        //        return; // button1_Click попадёт в finally и вернёт UI в норму
-        //    }
-
-
-
-        //    ct.ThrowIfCancellationRequested();
-
-        //    // --- Download + Warp (параллельно с семафором)
-        //    var wanted = hrefs
-        //        .GroupBy(a => a.id).Take(4)
-        //        .SelectMany(g => g.Where(a => a.band is "B03" or "B04" or "B08" or "B05" or "Fmask"))
-        //        .ToList();
-
-        //    int total = wanted.Count;
-        //    int dlDone = 0;
-        //    int wpDone = 0;
-
-        //    await ClipFewScenesWithProgressAsync(
-        //        wanted,
-        //        onDownload: (id, band, done) => {
-        //            Interlocked.Exchange(ref dlDone, done);
-        //            progress.Report(new(Stage.Download, dlDone, total, $"{id}/{band}"));
-        //        },
-        //        onWarp: (id, band, done) => {
-        //            Interlocked.Exchange(ref wpDone, done);
-        //            progress.Report(new(Stage.Warp, wpDone, total, $"{id}/{band}"));
-        //        },
-        //        ct: ct);
-
-        //    ct.ThrowIfCancellationRequested();
-
-        //    // --- Bake PNG (NDVI)
-        //    var firstId = hrefs.Select(h => h.id).First();
-        //    progress.Report(new(Stage.Bake, 0, 3, firstId));
-        //    var pngPath = await BuildNdviOverlayPngForId(firstId); // твоя функция
-        //    progress.Report(new(Stage.Bake, 3, 3, System.IO.Path.GetFileName(pngPath)));
-
-        //    // --- Show
-        //    progress.Report(new(Stage.Show, 0, 1, "overlay"));
-        //    await ShowOverlayForFirstSceneAsync();
-        //    progress.Report(new(Stage.Done, 1, 1, "done"));
-        //}
-
+     
         private async Task RunPipelineAsync(IProgress<ProgressEvent> progress, CancellationToken ct) {
             // --- Search
             progress.Report(new(Stage.Search, 0, 1, "STAC"));
@@ -386,9 +452,10 @@ namespace NASA_Space_Apps_Challenge {
             // если ничего не нашли — красиво завершаем
             if (hrefs.Count == 0) { progress.Report(new(Stage.Done, 1, 1, "no assets")); return; }
 
-            // мгновенно показать, если уже запечено ранее
-            if (await TryShowCachedOverlayAsync(dayStartUtc, box)) {
-                progress.Report(new(Stage.Show, 1, 1, "cached overlay"));
+        
+
+            if (await TryShowCachedTilesAsync(dayStartUtc, box)) {
+                progress.Report(new(Stage.Show, 1, 1, "cached tiles"));
                 progress.Report(new(Stage.Done, 1, 1, "done"));
                 return;
             }
@@ -419,12 +486,25 @@ namespace NASA_Space_Apps_Challenge {
             ct.ThrowIfCancellationRequested();
 
             // --- Bake все сцены этого дня в bakes/<bboxKey>/<yyyyMMdd> + показать
-            await BakeDayAsync(hrefs, dayStartUtc, box, progress, ct);
+            // await BakeDayAsync(hrefs, dayStartUtc, box, progress, ct);
+
+
+            await BakeDayTilesAsync(hrefs, dayStartUtc, box, progress, ct);
 
             // --- Done
             progress.Report(new(Stage.Done, 1, 1, "done"));
         }
 
+
+        private async Task PostTileLayerAsync(DateTime utcDay, BBox b) {
+            await webView21.EnsureCoreWebView2Async();
+            var msg = JsonSerializer.Serialize(new {
+                type = "tileLayer",
+                bboxKey = BboxKey(b),
+                dateKey = DateKey(utcDay)   // yyyyMMdd
+            });
+            webView21.CoreWebView2.PostWebMessageAsString(msg);
+        }
 
         private async Task<(List<(string id, string url, string band)> hrefs, DateTime day)>
     SearchAsync(CancellationToken ct) {
@@ -554,17 +634,149 @@ namespace NASA_Space_Apps_Challenge {
             await webView21.EnsureCoreWebView2Async();
 
             webView21.CoreWebView2.NavigationCompleted += async (_, __) => {
+
                 var todayUtc = DateTime.UtcNow.Date;
-                if (!await TryShowCachedOverlayAsync(todayUtc, box))
-                    lStatus.Text = "no cached overlay for today";
+                if (!await TryShowCachedTilesAsync(todayUtc, box))
+                    lStatus.Text = "no cached tiles for today";
+
+                //var todayUtc = DateTime.UtcNow.Date;
+                //if (!await TryShowCachedOverlayAsync(todayUtc, box))
+                //    lStatus.Text = "no cached overlay for today";
             };
 
-            webView21.CoreWebView2.WebMessageReceived += (s, a) =>
-                System.Diagnostics.Debug.WriteLine($"[WebView2] {a.WebMessageAsJson}");
+            webView21.CoreWebView2.WebMessageReceived += async (s, a) =>
+            {
+                try {
+                    var doc = JsonDocument.Parse(a.WebMessageAsJson);
+                    if (!doc.RootElement.TryGetProperty("type", out var tp)) return;
+                    var t = tp.GetString();
+
+                    if (t == "bakeTile") {
+                        var dateKey = doc.RootElement.GetProperty("dateKey").GetString()!;
+                        var z = doc.RootElement.GetProperty("z").GetInt32();
+                        var x = doc.RootElement.GetProperty("x").GetInt32();
+                        var y = doc.RootElement.GetProperty("y").GetInt32();
+
+                        // день из dateKey
+                        var day = DateTime.ParseExact(dateKey, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
+                                                      System.Globalization.DateTimeStyles.AssumeUniversal).Date;
+
+                        await BakeSingleTileAsync(day, box, z, x, y);
+                        // сообщаем фронту — он инкрементит версию URL и перерисует слой
+                        var msg = JsonSerializer.Serialize(new { type = "tileReady", z, x, y });
+                        webView21.CoreWebView2.PostWebMessageAsString(msg);
+                    }
+                }
+                catch (Exception ex) {
+                    System.Diagnostics.Debug.WriteLine("[WebView2] bakeTile error: " + ex);
+                }
+            };
+
 
             webView21.CoreWebView2.Navigate("http://localhost:5173/");
 
         }
+
+
+        private async Task BakeSingleTileAsync(DateTime utcDay, BBox viewBbox, int z, int x, int y) {
+            // 1) убедимся что у нас есть сцена/клипы на этот день (или подкачаем быстро)
+            var (hrefs, _) = await SearchAsync(CancellationToken.None); // использует timelineControl1.Current, при желании переопредели на utcDay
+            if (hrefs.Count == 0) return;
+
+            // выбираем предпочтительную сцену
+            var sceneId = hrefs.Select(h => h.id).Distinct()
+                               .OrderByDescending(s => s.Contains("HLSS30", StringComparison.OrdinalIgnoreCase))
+                               .ThenBy(s => s)
+                               .First();
+
+            // 2) вырезаем именно границы этого тайла (чтобы NDVI считать ровно по нему)
+            var tb = TileBounds(z, x, y);
+            var tileBbox = new BBox(tb.minLon, tb.minLat, tb.maxLon, tb.maxLat);
+
+            // скачиваем + warp для нужных полос только если их нет (кэшируем в data/clips)
+            var needed = hrefs.Where(h => h.id == sceneId && (h.band is "B04" or "B08" or "B05" or "Fmask")).ToList();
+            await ClipSpecificBBoxAsync(needed, tileBbox);
+
+            // 3) строим NDVI буфер именно по тайловым клипам
+            var (ndviSm, w, h, clip, ramp) = BuildNdviBufferForId_UsingBBox(sceneId, tileBbox);
+
+            // 4) сохраняем тайл
+            var outAbs = TilePath(TilesDir(utcDay, viewBbox), z, x, y);
+            RenderTileFromNdvi(ndviSm, w, h, tileBbox, clip, ramp, GAMMA, outAbs, z, x, y);
+        }
+
+        private async Task ClipSpecificBBoxAsync(
+    List<(string id, string url, string band)> assets, BBox b) {
+            Directory.CreateDirectory(ClipsDir);
+            var gdalRoot = Path.Combine(AppContext.BaseDirectory, "release-1930-x64-gdal-3-11-3-mapserver-8-4-0");
+            var warpExe = ResolveGdalApp(gdalRoot, "gdalwarp.exe");
+
+            foreach (var a in assets) {
+                var fileName = $"{a.id}_{a.band}__{BboxKey(b)}.tif".Replace('/', '_').Replace('\\', '_');
+                var outTifAbs = Path.Combine(ClipsDir, fileName);
+                if (!File.Exists(outTifAbs)) {
+                    await RunGdalWarpAsync(gdalRoot, warpExe, a.url, outTifAbs,
+                        b.MinLon, b.MinLat, b.MaxLon, b.MaxLat, Keys.EARTH_LOGIN_TOKEN, 768);
+                }
+            }
+        }
+
+
+        private (float[] ndviSm, int w, int h, (double lo, double hi) clip, Stop[] ramp)
+    BuildNdviBufferForId_UsingBBox(string id, BBox b) {
+            string clipsDir = ClipsDir;
+            // ищем файлы именно с ключом этого bbox: *_<BAND>__<bboxKey>.tif
+            string key = BboxKey(b);
+
+            string rPath = Directory.GetFiles(clipsDir, $"{id}_B04__{key}.tif").FirstOrDefault()
+                ?? throw new Exception("нет клипа B04 для тайла");
+            string nPath = Directory.GetFiles(clipsDir, $"{id}_B08__{key}.tif").FirstOrDefault()
+                ?? Directory.GetFiles(clipsDir, $"{id}_B05__{key}.tif").FirstOrDefault()
+                ?? throw new Exception("нет клипа NIR (B08/B05) для тайла");
+            string fPath = Directory.GetFiles(clipsDir, $"{id}_Fmask__{key}.tif").FirstOrDefault();
+
+            var R = ReadTiff16(rPath);
+            var N = ReadTiff16(nPath);
+            short[,] F = fPath != null ? ReadTiff16(fPath) : null;
+
+            int h = R.GetLength(0), w = R.GetLength(1);
+            if (N.GetLength(0) != h || N.GetLength(1) != w) throw new Exception("размеры полос не совпадают");
+
+            var ndvi = new float[w * h];
+            var vals = new List<float>(w * h / 4);
+            int k = 0;
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++, k++) {
+                    if (F != null) {
+                        int c = F[y, x];
+                        if (c == 1 || c == 2 || c == 3 || c == 4 || c == 255) { ndvi[k] = float.NaN; continue; }
+                    }
+                    double r = Math.Clamp(R[y, x] / 10000.0, 0, 1);
+                    double n = Math.Clamp(N[y, x] / 10000.0, 0, 1);
+                    double den = (n + r);
+                    if (den <= 1e-6) { ndvi[k] = float.NaN; continue; }
+                    double v = (n - r) / den;
+                    if (v < NDVI_MIN) { ndvi[k] = float.NaN; continue; }
+                    ndvi[k] = (float)v;
+                    vals.Add((float)v);
+                }
+
+            var ndviSm = Blur3x3NaNAware(ndvi, w, h, passes: 1);
+
+            vals.Clear();
+            for (int i = 0; i < ndviSm.Length; i++) if (float.IsFinite(ndviSm[i])) vals.Add(ndviSm[i]);
+            var clip = PercentileClip(CollectionsMarshal.AsSpan(vals), PLO, PHI);
+
+            var ramp = new[] {
+        new Stop(0.00,18,32,110,20), new Stop(0.15,25,80,200,60),
+        new Stop(0.30,30,160,220,110), new Stop(0.45,40,170,90,160),
+        new Stop(0.60,200,210,60,200), new Stop(0.75,240,170,50,220),
+        new Stop(0.90,235,80,60,235), new Stop(1.00,180,20,30,240),
+    };
+
+            return (ndviSm, w, h, clip, ramp);
+        }
+
 
         //private void StartLocalHost(int port, string apiKey) {
 
@@ -1089,6 +1301,128 @@ namespace NASA_Space_Apps_Challenge {
         }
 
 
+
+        private (float[] ndviSm, int w, int h, (double lo, double hi) clip, Stop[] ramp)
+    BuildNdviBufferForId(string id, out BBox geoBounds) {
+            string clipsDir = Path.Combine(AppContext.BaseDirectory, "data", "clips");
+
+            string rPath = Directory.GetFiles(clipsDir, $"{id}_B04.tif").FirstOrDefault()
+                ?? throw new Exception("нет клипа B04");
+            string nPath = Directory.GetFiles(clipsDir, $"{id}_B08.tif").FirstOrDefault()
+                ?? Directory.GetFiles(clipsDir, $"{id}_B05.tif").FirstOrDefault()
+                ?? throw new Exception("нет клипа NIR (B08/B05)");
+            string fPath = Directory.GetFiles(clipsDir, $"{id}_Fmask.tif").FirstOrDefault();
+
+            var R = ReadTiff16(rPath);
+            var N = ReadTiff16(nPath);
+            short[,] F = fPath != null ? ReadTiff16(fPath) : null;
+
+            int h = R.GetLength(0), w = R.GetLength(1);
+            if (N.GetLength(0) != h || N.GetLength(1) != w) throw new Exception("размеры полос не совпадают");
+
+            // границы растра = текущий bbox (важно для геопривязки выборки)
+            geoBounds = box;
+
+            // считаем NDVI
+            var ndvi = new float[w * h];
+            var vals = new List<float>(w * h / 4);
+            int k = 0;
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++, k++) {
+                    if (F != null) {
+                        int c = F[y, x];
+                        if (c == 1 || c == 2 || c == 3 || c == 4 || c == 255) { ndvi[k] = float.NaN; continue; }
+                    }
+                    double r = Math.Clamp(R[y, x] / 10000.0, 0, 1);
+                    double n = Math.Clamp(N[y, x] / 10000.0, 0, 1);
+                    double den = (n + r);
+                    if (den <= 1e-6) { ndvi[k] = float.NaN; continue; }
+                    double v = (n - r) / den;
+                    if (v < NDVI_MIN) { ndvi[k] = float.NaN; continue; }
+
+                    ndvi[k] = (float)v;
+                    vals.Add((float)v);
+                }
+            }
+            if (vals.Count == 0) throw new Exception("после масок/порогов нет валидных NDVI");
+
+            var ndviSm = Blur3x3NaNAware(ndvi, w, h, passes: 1);
+
+            // перцентили по сглаженной карте
+            vals.Clear();
+            for (int i = 0; i < ndviSm.Length; i++)
+                if (float.IsFinite(ndviSm[i])) vals.Add(ndviSm[i]);
+            var clip = PercentileClip(CollectionsMarshal.AsSpan(vals), PLO, PHI);
+
+            // та же палитра
+            var ramp = new[]
+            {
+        new Stop(0.00,  18,  32, 110,  20),
+        new Stop(0.15,  25,  80, 200,  60),
+        new Stop(0.30,  30, 160, 220, 110),
+        new Stop(0.45,  40, 170,  90, 160),
+        new Stop(0.60, 200, 210,  60, 200),
+        new Stop(0.75, 240, 170,  50, 220),
+        new Stop(0.90, 235,  80,  60, 235),
+        new Stop(1.00, 180,  20,  30, 240),
+    };
+
+            return (ndviSm, w, h, clip, ramp);
+        }
+
+        private async Task BakeDayTilesAsync(
+    List<(string id, string url, string band)> hrefs,
+    DateTime utcDay, BBox b,
+    IProgress<ProgressEvent> progress,
+    CancellationToken ct) {
+            string dayDir = BakeDir(utcDay, b);
+            Directory.CreateDirectory(dayDir);
+            string tilesRoot = TilesDir(utcDay, b);
+
+            // выберем «предпочтительную» сцену этого дня
+            var id = hrefs.Select(h => h.id).Distinct()
+                          .OrderByDescending(s => s.Contains("HLSS30", StringComparison.OrdinalIgnoreCase))
+                          .ThenBy(s => s)
+                          .First();
+
+            progress.Report(new(Stage.Bake, 0, 1, $"tiling {id}"));
+
+            // строим NDVI буфер
+            var (ndviSm, w, h, clip, ramp) = BuildNdviBufferForId(id, out var geoBounds);
+
+            // по каждому зуму — набор тайлов, покрывающих bbox
+            var zooms = new List<ZoomRange>();
+            for (int z = Z_MIN; z <= Z_MAX; z++) {
+                var (xMin, xMax, yMin, yMax) = TilesCoveringBBox(z, b);
+                zooms.Add(new ZoomRange(z, xMin, xMax, yMin, yMax));
+
+                int total = (xMax - xMin + 1) * (yMax - yMin + 1);
+                int done = 0;
+
+                for (int x = xMin; x <= xMax; x++) {
+                    for (int y = yMin; y <= yMax; y++) {
+                        ct.ThrowIfCancellationRequested();
+                        string outAbs = TilePath(tilesRoot, z, x, y);
+                        if (!File.Exists(outAbs)) {
+                            RenderTileFromNdvi(ndviSm, w, h, geoBounds, clip, ramp, GAMMA, outAbs, z, x, y);
+                        }
+                        done++;
+                        if ((done % 20) == 0)
+                            progress.Report(new(Stage.Bake, done, total, $"z{z} {done}/{total}"));
+                    }
+                }
+                progress.Report(new(Stage.Bake, 1, 1, $"z{z} done"));
+            }
+
+            // manifest для тайлов
+            WriteTileManifest(dayDir, utcDay, b, zooms);
+
+            // показать слой тайлов (см. п.8)
+            await PostTileLayerAsync(utcDay, b);
+        }
+
+
+
         private void WriteBakeManifest(string dirAbs, string bboxKey, DateTime utc, IEnumerable<string> relFiles) {
             var files = relFiles.ToArray();
             var preferred = files.FirstOrDefault(); // стратегию можно улучшить (например, Sentinel > Landsat)
@@ -1242,6 +1576,20 @@ namespace NASA_Space_Apps_Challenge {
             return true;
         }
 
+        private async Task<bool> TryShowCachedTilesAsync(DateTime utcDay, BBox b) {
+            string dir = BakeDir(utcDay, b);
+            string manFn = Path.Combine(dir, "manifest.json");
+            if (!File.Exists(manFn)) return false;
+
+            // быстрая проверка: есть ли хоть один тайл
+            string tilesRoot = TilesDir(utcDay, b);
+            if (!Directory.Exists(tilesRoot)) return false;
+
+            // ок — постим команду на фронт
+            await PostTileLayerAsync(utcDay, b);
+            return true;
+        }
+
 
         private static string PreferFirst(IEnumerable<string> rels) {
             // чуть «умнее»: Sentinel (HLSS30) приоритетнее Landsat (HLSL30)
@@ -1292,6 +1640,212 @@ namespace NASA_Space_Apps_Challenge {
             await PostOverlayAsync(preferred, b.ToArray());
         }
 
+
+
+        //    private unsafe void RenderTileFromNdvi(
+        //float[] ndviSm, int w, int h, BBox b,
+        //(double lo, double hi) clip, Stop[] ramp, double gamma,
+        //string outPngAbs, int z, int x, int y) {
+        //        Directory.CreateDirectory(Path.GetDirectoryName(outPngAbs)!);
+
+        //        using var bmp = new Bitmap(TILE_SIZE, TILE_SIZE, PixelFormat.Format32bppArgb);
+        //        var data = bmp.LockBits(new Rectangle(0, 0, TILE_SIZE, TILE_SIZE), ImageLockMode.WriteOnly, bmp.PixelFormat);
+
+        //        var (lonMin, latMin, lonMax, latMax) = TileBounds(z, x, y);
+
+        //        double invW = 1.0 / (w - 1);
+        //        double invH = 1.0 / (h - 1);
+        //        double dLon = b.MaxLon - b.MinLon;
+        //        double dLat = b.MaxLat - b.MinLat;
+
+        //        byte* row = (byte*)data.Scan0;
+        //        for (int py = 0; py < TILE_SIZE; py++, row += data.Stride) {
+        //            byte* px = row;
+        //            // пиксельный центр → гео
+        //            double v = (py + 0.5) / TILE_SIZE;
+        //            double lat = Math.Atan(Math.Sinh(Math.PI * (1 - 2 * v * (1 << z) / Math.Pow(2, z) * 2 + 2 * y / Math.Pow(2, z)))) * 180.0 / Math.PI; // удобнее: используем TileBounds + линейная интерполяция
+        //                                                                                                                                                 // но проще линейно в пределах тайла:
+        //            lat = latMax - (latMax - latMin) * (py + 0.5) / TILE_SIZE;
+
+        //            for (int pxIdx = 0; pxIdx < TILE_SIZE; pxIdx++) {
+        //                double u = (pxIdx + 0.5) / TILE_SIZE;
+        //                double lon = lonMin + (lonMax - lonMin) * u;
+
+        //                // в пределах исходного bbox?
+        //                if (lon < b.MinLon || lon > b.MaxLon || lat < b.MinLat || lat > b.MaxLat) {
+        //                    px[0] = px[1] = px[2] = 0; px[3] = 0; px += 4; continue;
+        //                }
+
+        //                // lon/lat -> индексы исходной растровой карты (линейно)
+        //                double fx = (lon - b.MinLon) / dLon * (w - 1);
+        //                double fy = (b.MaxLat - lat) / dLat * (h - 1);
+
+        //                int ix = (int)fx;
+        //                int iy = (int)fy;
+
+        //                float vNdvi = float.NaN;
+
+        //                if (ix >= 0 && ix < w && iy >= 0 && iy < h) {
+        //                    // bilinear
+        //                    int ix1 = Math.Min(w - 1, ix + 1);
+        //                    int iy1 = Math.Min(h - 1, iy + 1);
+        //                    double dx = fx - ix;
+        //                    double dy = fy - iy;
+
+        //                    float v00 = ndviSm[iy * w + ix];
+        //                    float v10 = ndviSm[iy * w + ix1];
+        //                    float v01 = ndviSm[iy1 * w + ix];
+        //                    float v11 = ndviSm[iy1 * w + ix1];
+
+        //                    // если NaN — берём ближайшее валидное
+        //                    if (!float.IsFinite(v00) && float.IsFinite(v10)) v00 = v10;
+        //                    if (!float.IsFinite(v00) && float.IsFinite(v01)) v00 = v01;
+        //                    if (!float.IsFinite(v00) && float.IsFinite(v11)) v00 = v11;
+
+        //                    if (float.IsFinite(v00) || float.IsFinite(v10) || float.IsFinite(v01) || float.IsFinite(v11)) {
+        //                        double da = float.IsFinite(v00) ? v00 : double.NaN;
+        //                        double b10 = float.IsFinite(v10) ? v10 : da;
+        //                        double b01 = float.IsFinite(v01) ? v01 : da;
+        //                        double b11 = float.IsFinite(v11) ? v11 : da;
+
+        //                        double top = (1 - dx) * (float.IsFinite(v00) ? v00 : b10) + dx * b10;
+        //                        double bot = (1 - dx) * (float.IsFinite(v01) ? v01 : b11) + dx * b11;
+        //                        vNdvi = (float)((1 - dy) * top + dy * bot);
+        //                    }
+        //                }
+
+        //                if (!float.IsFinite(vNdvi)) {
+        //                    px[0] = px[1] = px[2] = 0; px[3] = 0; px += 4; continue;
+        //                }
+
+        //                // норм/гамма/палитра
+        //                double t = (vNdvi - clip.lo) / (clip.hi - clip.lo);
+        //                if (t < 0) t = 0; if (t > 1) t = 1;
+        //                t = Math.Pow(t, gamma);
+
+        //                // интерполяция по ramp
+        //                Stop s0 = ramp[0], s1 = ramp[^1];
+        //                for (int i = 1; i < ramp.Length; i++)
+        //                    if (t <= ramp[i].v) { s0 = ramp[i - 1]; s1 = ramp[i]; break; }
+        //                double dt = (t - s0.v) / Math.Max(1e-9, (s1.v - s0.v));
+        //                var (r8, g8, b8, a8) = Lerp(s0, s1, dt);
+
+        //                // прозрачность по твоему глобальному масштабу (без «пера» у краёв)
+        //                byte a = (byte)Math.Clamp((int)Math.Round(a8 * HEATMAP_ALPHA_SCALE), 0, 255);
+
+        //                px[0] = b8; px[1] = g8; px[2] = r8; px[3] = a; px += 4;
+        //            }
+        //        }
+        //        bmp.UnlockBits(data);
+        //        bmp.Save(outPngAbs, ImageFormat.Png);
+        //    }
+
+        private unsafe void RenderTileFromNdvi(
+    float[] ndviSm, int w, int h, BBox b,
+    (double lo, double hi) clip, Stop[] ramp, double gamma,
+    string outPngAbs, int z, int x, int y) {
+            Directory.CreateDirectory(Path.GetDirectoryName(outPngAbs)!);
+
+            using var bmp = new Bitmap(TILE_SIZE, TILE_SIZE, PixelFormat.Format32bppArgb);
+            var data = bmp.LockBits(new Rectangle(0, 0, TILE_SIZE, TILE_SIZE), ImageLockMode.WriteOnly, bmp.PixelFormat);
+
+            // helpers
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            static double MercYToLat(double v01) // v01 in [0..1] along Y in WebMercator
+                => Math.Atan(Math.Sinh(Math.PI * (1 - 2 * v01))) * 180.0 / Math.PI;
+
+            double n = Math.Pow(2, z);
+            double invN = 1.0 / n;
+            double invTile = 1.0 / TILE_SIZE;
+
+            double dLon = b.MaxLon - b.MinLon;
+            double dLat = b.MaxLat - b.MinLat;
+
+            byte* row = (byte*)data.Scan0;
+            for (int py = 0; py < TILE_SIZE; py++, row += data.Stride) {
+                byte* p = row;
+
+                // глобальная нормированная координата Y всего мира (0..1)
+                double yGlob01 = (y + (py + 0.5) * invTile) * invN;   // в долях высоты мира
+                double lat = MercYToLat(yGlob01);
+
+                for (int pxIdx = 0; pxIdx < TILE_SIZE; pxIdx++) {
+                    // глобальная нормированная координата X всего мира (0..1)
+                    double xGlob01 = (x + (pxIdx + 0.5) * invTile) * invN;
+                    double lon = xGlob01 * 360.0 - 180.0;
+
+                    // вне исходного bbox → прозрачный пиксель
+                    if (lon < b.MinLon || lon > b.MaxLon || lat < b.MinLat || lat > b.MaxLat) {
+                        p[0] = p[1] = p[2] = 0; p[3] = 0; p += 4;
+                        continue;
+                    }
+
+                    // lon/lat → индексы исходного растрового клипа (в пикселях)
+                    double fx = (lon - b.MinLon) / dLon * (w - 1);
+                    double fy = (b.MaxLat - lat) / dLat * (h - 1);
+
+                    int ix = (int)fx;
+                    int iy = (int)fy;
+
+                    float vNdvi = float.NaN;
+
+                    if (ix >= 0 && ix < w && iy >= 0 && iy < h) {
+                        // билинейная интерполяция с «затыканием» NaN ближайшими валидными
+                        int ix1 = Math.Min(w - 1, ix + 1);
+                        int iy1 = Math.Min(h - 1, iy + 1);
+                        double dx = fx - ix;
+                        double dy = fy - iy;
+
+                        float v00 = ndviSm[iy * w + ix];
+                        float v10 = ndviSm[iy * w + ix1];
+                        float v01 = ndviSm[iy1 * w + ix];
+                        float v11 = ndviSm[iy1 * w + ix1];
+
+                        if (!float.IsFinite(v00) && float.IsFinite(v10)) v00 = v10;
+                        if (!float.IsFinite(v00) && float.IsFinite(v01)) v00 = v01;
+                        if (!float.IsFinite(v00) && float.IsFinite(v11)) v00 = v11;
+
+                        if (float.IsFinite(v00) || float.IsFinite(v10) || float.IsFinite(v01) || float.IsFinite(v11)) {
+                            double s10 = float.IsFinite(v10) ? v10 : v00;
+                            double s01 = float.IsFinite(v01) ? v01 : v00;
+                            double s11 = float.IsFinite(v11) ? v11 : v00;
+
+                            double top = (1 - dx) * (float.IsFinite(v00) ? v00 : s10) + dx * s10;
+                            double bot = (1 - dx) * (float.IsFinite(v01) ? v01 : s11) + dx * s11;
+                            vNdvi = (float)((1 - dy) * top + dy * bot);
+                        }
+                    }
+
+                    if (!float.IsFinite(vNdvi)) {
+                        p[0] = p[1] = p[2] = 0; p[3] = 0; p += 4;
+                        continue;
+                    }
+
+                    // нормализация → гамма → палитра
+                    double t = (vNdvi - clip.lo) / (clip.hi - clip.lo);
+                    if (t < 0) t = 0; if (t > 1) t = 1;
+                    t = Math.Pow(t, gamma);
+
+                    Stop s0 = ramp[0], s1 = ramp[^1];
+                    for (int i = 1; i < ramp.Length; i++)
+                        if (t <= ramp[i].v) { s0 = ramp[i - 1]; s1 = ramp[i]; break; }
+                    double dt = (t - s0.v) / Math.Max(1e-9, (s1.v - s0.v));
+                    var (r8, g8, b8, a8) = Lerp(s0, s1, dt);
+
+                    // глобальная прозрачность
+                    byte a = (byte)Math.Clamp((int)Math.Round(a8 * HEATMAP_ALPHA_SCALE), 0, 255);
+
+                    p[0] = b8; p[1] = g8; p[2] = r8; p[3] = a;
+                    p += 4;
+                }
+            }
+
+            bmp.UnlockBits(data);
+            bmp.Save(outPngAbs, ImageFormat.Png);
+        }
+
+
+
         // ===== Paths/keys =====
         private string BakesRoot => Path.Combine(AppContext.BaseDirectory, "data", "bakes");
 
@@ -1310,6 +1864,102 @@ namespace NASA_Space_Apps_Challenge {
         private record BakeManifest(
             string dateUtc, string bboxKey, string[] files, string? preferred // какую картинку показывать первой
         );
+
+
+
+        private record ZoomRange(int z, int xMin, int xMax, int yMin, int yMax);
+
+        private record TileBakeManifest(
+            string dateUtc,
+            string bboxKey,
+            ZoomRange[] zooms,
+            string palette,
+            int version = 1
+        );
+
+        private void WriteTileManifest(string dirAbs, DateTime utc, BBox b, IEnumerable<ZoomRange> zooms) {
+            var man = new TileBakeManifest(
+                dateUtc: utc.ToString("yyyy-MM-dd"),
+                bboxKey: BboxKey(b),
+                zooms: zooms.ToArray(),
+                palette: "ir-heat-v1",
+                version: 1
+            );
+            File.WriteAllText(Path.Combine(dirAbs, "manifest.json"),
+                JsonSerializer.Serialize(man, new JsonSerializerOptions { WriteIndented = true }));
+        }
+
+
+
+        private string TilesDir(DateTime utc, BBox b) =>
+    Path.Combine(BakeDir(utc, b), "z");
+
+        private static string TilePath(string tilesRoot, int z, int x, int y) =>
+            Path.Combine(tilesRoot, z.ToString(), x.ToString(), y.ToString() + ".png");
+
+        // относительный URL от корня BakesRoot
+        private string TileRelUrl(DateTime utc, BBox b, int z, int x, int y) {
+            string abs = TilePath(TilesDir(utc, b), z, x, y);
+            return Path.GetRelativePath(BakesRoot, abs).Replace(Path.DirectorySeparatorChar, '/');
+        }
+
+
+        // ---- Tiles / WebMercator helpers ----
+        private const int TILE_SIZE = 256;
+        private const int Z_MIN = 8;   // подстрой по вкусу
+        private const int Z_MAX = 14;  // подстрой по вкусу
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double LonToMercX(double lon) => (lon + 180.0) / 360.0;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double LatToMercY(double lat) {
+            double s = Math.Sin(lat * Math.PI / 180.0);
+            double y = 0.5 - Math.Log((1 + s) / (1 - s)) / (4 * Math.PI);
+            return y;
+        }
+
+        private static (double minLon, double minLat, double maxLon, double maxLat) TileBounds(int z, int x, int y) {
+            double n = Math.Pow(2, z);
+            double lon1 = x / n * 360.0 - 180.0;
+            double lat1 = Math.Atan(Math.Sinh(Math.PI * (1 - 2 * y / n))) * 180.0 / Math.PI;
+            double lon2 = (x + 1) / n * 360.0 - 180.0;
+            double lat2 = Math.Atan(Math.Sinh(Math.PI * (1 - 2 * (y + 1) / n))) * 180.0 / Math.PI;
+            // south<north, west<east
+            return (lon1, lat2, lon2, lat1);
+        }
+
+        //private static (int xMin, int xMax, int yMin, int yMax) TilesCoveringBBox(int z, BBox b) {
+        //    double n = Math.Pow(2, z);
+        //    // clamp lat к допустимому диапазону проекции
+        //    double latMin = Math.Max(-85.05112878, Math.Min(85.05112878, b.MinLat));
+        //    double latMax = Math.Max(-85.05112878, Math.Min(85.05112878, b.MaxLat));
+
+        //    int xMin = (int)Math.Floor((b.MinLon + 180.0) / 360.0 * n);
+        //    int xMax = (int)Math.Floor((b.MaxLon + 180.0) / 360.0 * n);
+        //    int yMin = (int)Math.Floor((1.0 - Math.Log(Math.Tan(latMax * Math.PI / 180.0) + 1.0 / Math.Cos(latMax * Math.PI / 180.0)) / Math.PI) / 2.0 * n);
+        //    int yMax = (int)Math.Floor((1.0 - Math.Log(Math.Tan(latMin * Math.PI / 180.0) + 1.0 / Math.Cos(latMin * Math.PI / 180.0)) / Math.PI) / 2.0 * n);
+
+        //    return (Math.Max(0, xMin), Math.Max(0, yMin), (int)n - 1 < xMax ? (int)n - 1 : xMax, (int)n - 1 < yMax ? (int)n - 1 : yMax);
+        //}
+        private static (int xMin, int xMax, int yMin, int yMax) TilesCoveringBBox(int z, BBox b) {
+            double n = Math.Pow(2, z);
+            double latMin = Math.Max(-85.05112878, Math.Min(85.05112878, b.MinLat));
+            double latMax = Math.Max(-85.05112878, Math.Min(85.05112878, b.MaxLat));
+
+            int xMin = (int)Math.Floor((b.MinLon + 180.0) / 360.0 * n);
+            int xMax = (int)Math.Floor((b.MaxLon + 180.0) / 360.0 * n);
+            int yMin = (int)Math.Floor((1.0 - Math.Log(Math.Tan(latMax * Math.PI / 180.0) + 1.0 / Math.Cos(latMax * Math.PI / 180.0)) / Math.PI) / 2.0 * n);
+            int yMax = (int)Math.Floor((1.0 - Math.Log(Math.Tan(latMin * Math.PI / 180.0) + 1.0 / Math.Cos(latMin * Math.PI / 180.0)) / Math.PI) / 2.0 * n);
+
+            int last = (int)n - 1;
+            return (
+                Math.Max(0, xMin),
+                Math.Min(last, xMax),
+                Math.Max(0, yMin),
+                Math.Min(last, yMax)
+            );
+        }
 
 
     }
