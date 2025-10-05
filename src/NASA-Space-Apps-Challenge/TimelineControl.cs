@@ -27,7 +27,7 @@ namespace TimelineWinForms {
         public DateTime RangeEnd { get => _rangeEnd; set { _rangeEnd = value; ClampCurrent(); Invalidate(); } }
 
         [Category("Timeline"), Description("Current date marker")]
-        public DateTime Current { get => _current; set { _current = value; ClampCurrent(); Invalidate(); OnCurrentChanged?.Invoke(this, EventArgs.Empty); } }
+        public DateTime Current { get => _current; set { _current = value; ClampCurrent(); Invalidate(); DateChanged?.Invoke(this, EventArgs.Empty); } }
 
         [Category("Timeline"), Description("Pixels per day (zoom)")]
         public double PixelsPerDay { get => _pxPerDay; set { _pxPerDay = Math.Max(0.2, Math.Min(60, value)); Invalidate(); OnSpanChanged?.Invoke(this, EventArgs.Empty); } }
@@ -39,7 +39,7 @@ namespace TimelineWinForms {
         public bool IsPlaying { get => _isPlaying; set { _isPlaying = value; playTimer.Enabled = value; Invalidate(); OnPlayToggled?.Invoke(this, EventArgs.Empty); } }
 
         // events
-        public event EventHandler OnCurrentChanged;
+        public event EventHandler DateChanged;
         public event EventHandler OnSpanChanged;
         public event EventHandler OnPlayToggled;
 

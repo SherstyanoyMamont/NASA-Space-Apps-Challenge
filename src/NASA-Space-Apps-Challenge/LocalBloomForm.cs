@@ -210,6 +210,18 @@ namespace NASA_Space_Apps_Challenge {
             this.Shown += (s, e) => { OpenMap(); };
 
 
+            this.timelineControl1.DateChanged += timelineControl1_DateChanged;
+        }
+
+
+        private async void timelineControl1_DateChanged(object? sender, EventArgs e) {
+            var d = timelineControl1.Current;               // DateTime (локальный/UTC — как у тебя)
+            var dayUtc = new DateTime(d.Year, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc);
+            if (!await TryShowCachedOverlayAsync(dayUtc, box)) {
+                // нет кэша — можно мягко подсказку в статусе (без автозапуска тяжёлой печки)
+                lStatus.Text = "no cache for this day";
+                pbStatus.Value = 0;
+            }
         }
 
         // ------------------------------------------------------------
@@ -306,38 +318,91 @@ namespace NASA_Space_Apps_Challenge {
                 lStatus.Text = "error: " + ex.Message;
             }
             finally {
-               // btnCancel.Enabled = false;
+                // btnCancel.Enabled = false;
                 button1.Enabled = true;
                 _cts?.Dispose(); _cts = null;
             }
         }
 
+        //private async Task RunPipelineAsync(IProgress<ProgressEvent> progress, CancellationToken ct) {
+        //    // --- Search
+        //    progress.Report(new(Stage.Search, 0, 1, "STAC"));
+        //    var (hrefs, when) = await SearchAsync(ct);  // см. ниже
+
+        //    progress.Report(new(Stage.Search, 1, 1, $"found {hrefs.Count} assets @ {when:yyyy-MM-dd}"));
+
+        //    if (hrefs.Count == 0) {
+        //        // доводим прогресс до конца и выходим корректно
+        //        progress.Report(new(Stage.Done, 1, 1, "no assets"));
+        //        return; // button1_Click попадёт в finally и вернёт UI в норму
+        //    }
+
+
+
+        //    ct.ThrowIfCancellationRequested();
+
+        //    // --- Download + Warp (параллельно с семафором)
+        //    var wanted = hrefs
+        //        .GroupBy(a => a.id).Take(4)
+        //        .SelectMany(g => g.Where(a => a.band is "B03" or "B04" or "B08" or "B05" or "Fmask"))
+        //        .ToList();
+
+        //    int total = wanted.Count;
+        //    int dlDone = 0;
+        //    int wpDone = 0;
+
+        //    await ClipFewScenesWithProgressAsync(
+        //        wanted,
+        //        onDownload: (id, band, done) => {
+        //            Interlocked.Exchange(ref dlDone, done);
+        //            progress.Report(new(Stage.Download, dlDone, total, $"{id}/{band}"));
+        //        },
+        //        onWarp: (id, band, done) => {
+        //            Interlocked.Exchange(ref wpDone, done);
+        //            progress.Report(new(Stage.Warp, wpDone, total, $"{id}/{band}"));
+        //        },
+        //        ct: ct);
+
+        //    ct.ThrowIfCancellationRequested();
+
+        //    // --- Bake PNG (NDVI)
+        //    var firstId = hrefs.Select(h => h.id).First();
+        //    progress.Report(new(Stage.Bake, 0, 3, firstId));
+        //    var pngPath = await BuildNdviOverlayPngForId(firstId); // твоя функция
+        //    progress.Report(new(Stage.Bake, 3, 3, System.IO.Path.GetFileName(pngPath)));
+
+        //    // --- Show
+        //    progress.Report(new(Stage.Show, 0, 1, "overlay"));
+        //    await ShowOverlayForFirstSceneAsync();
+        //    progress.Report(new(Stage.Done, 1, 1, "done"));
+        //}
+
         private async Task RunPipelineAsync(IProgress<ProgressEvent> progress, CancellationToken ct) {
             // --- Search
             progress.Report(new(Stage.Search, 0, 1, "STAC"));
-            var (hrefs, when) = await SearchAsync(ct);  // см. ниже
+            var (hrefs, dayStartUtc) = await SearchAsync(ct);
+            progress.Report(new(Stage.Search, 1, 1, $"found {hrefs.Count} assets @ {dayStartUtc:yyyy-MM-dd}"));
 
-            progress.Report(new(Stage.Search, 1, 1, $"found {hrefs.Count} assets @ {when:yyyy-MM-dd}"));
+            // если ничего не нашли — красиво завершаем
+            if (hrefs.Count == 0) { progress.Report(new(Stage.Done, 1, 1, "no assets")); return; }
 
-            if (hrefs.Count == 0) {
-                // доводим прогресс до конца и выходим корректно
-                progress.Report(new(Stage.Done, 1, 1, "no assets"));
-                return; // button1_Click попадёт в finally и вернёт UI в норму
+            // мгновенно показать, если уже запечено ранее
+            if (await TryShowCachedOverlayAsync(dayStartUtc, box)) {
+                progress.Report(new(Stage.Show, 1, 1, "cached overlay"));
+                progress.Report(new(Stage.Done, 1, 1, "done"));
+                return;
             }
-
-
 
             ct.ThrowIfCancellationRequested();
 
-            // --- Download + Warp (параллельно с семафором)
+            // --- Download + Warp (как у тебя сейчас, с прогрессом)
             var wanted = hrefs
                 .GroupBy(a => a.id).Take(4)
                 .SelectMany(g => g.Where(a => a.band is "B03" or "B04" or "B08" or "B05" or "Fmask"))
                 .ToList();
 
             int total = wanted.Count;
-            int dlDone = 0;
-            int wpDone = 0;
+            int dlDone = 0, wpDone = 0;
 
             await ClipFewScenesWithProgressAsync(
                 wanted,
@@ -353,17 +418,13 @@ namespace NASA_Space_Apps_Challenge {
 
             ct.ThrowIfCancellationRequested();
 
-            // --- Bake PNG (NDVI)
-            var firstId = hrefs.Select(h => h.id).First();
-            progress.Report(new(Stage.Bake, 0, 3, firstId));
-            var pngPath = await BuildNdviOverlayPngForId(firstId); // твоя функция
-            progress.Report(new(Stage.Bake, 3, 3, System.IO.Path.GetFileName(pngPath)));
+            // --- Bake все сцены этого дня в bakes/<bboxKey>/<yyyyMMdd> + показать
+            await BakeDayAsync(hrefs, dayStartUtc, box, progress, ct);
 
-            // --- Show
-            progress.Report(new(Stage.Show, 0, 1, "overlay"));
-            await ShowOverlayForFirstSceneAsync();
+            // --- Done
             progress.Report(new(Stage.Done, 1, 1, "done"));
         }
+
 
         private async Task<(List<(string id, string url, string band)> hrefs, DateTime day)>
     SearchAsync(CancellationToken ct) {
@@ -493,7 +554,9 @@ namespace NASA_Space_Apps_Challenge {
             await webView21.EnsureCoreWebView2Async();
 
             webView21.CoreWebView2.NavigationCompleted += async (_, __) => {
-                try { await ShowOverlayForFirstSceneAsync(); } catch { /* ignore */ }
+                var todayUtc = DateTime.UtcNow.Date;
+                if (!await TryShowCachedOverlayAsync(todayUtc, box))
+                    lStatus.Text = "no cached overlay for today";
             };
 
             webView21.CoreWebView2.WebMessageReceived += (s, a) =>
@@ -503,18 +566,61 @@ namespace NASA_Space_Apps_Challenge {
 
         }
 
+        //private void StartLocalHost(int port, string apiKey) {
+
+        //    if (_listener != null) { try { _listener.Stop(); _listener.Close(); } catch { } }
+
+        //    _listener = new HttpListener();
+        //    _listener.Prefixes.Add($"http://localhost:{port}/");
+        //    _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+        //    _listener.Start();
+
+        //    _ = Task.Run(async () => {
+        //        while (_listener.IsListening) {
+
+        //            var ctx = await _listener.GetContextAsync();
+        //            var path = ctx.Request.Url!.AbsolutePath.TrimStart('/');
+
+        //            if (string.IsNullOrEmpty(path)) {
+        //                var html = MapHtml(apiKey);
+        //                var b = Encoding.UTF8.GetBytes(html);
+        //                ctx.Response.ContentType = "text/html; charset=utf-8";
+        //                ctx.Response.ContentLength64 = b.LongLength;
+        //                await ctx.Response.OutputStream.WriteAsync(b, 0, b.Length);
+        //                ctx.Response.OutputStream.Close();
+        //                continue;
+        //            }
+
+        //            var local = Path.Combine(ClipsDir, path.Replace('/', Path.DirectorySeparatorChar));
+        //            if (File.Exists(local)) {
+        //                var bytes = await File.ReadAllBytesAsync(local);
+        //                ctx.Response.ContentType = GetContentType(local);
+        //                ctx.Response.ContentLength64 = bytes.LongLength;
+        //                await ctx.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
+        //                ctx.Response.OutputStream.Close();
+        //            }
+        //            else {
+        //                ctx.Response.StatusCode = 404;
+        //                await ctx.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("404"));
+        //                ctx.Response.OutputStream.Close();
+        //            }
+        //        }
+        //    });
+        //}
+
+
         private void StartLocalHost(int port, string apiKey) {
-
-            if (_listener != null) { try { _listener.Stop(); _listener.Close(); } catch { } }
-
+            if (_listener != null) _listener.Stop();
             _listener = new HttpListener();
             _listener.Prefixes.Add($"http://localhost:{port}/");
             _listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             _listener.Start();
 
+            string clips = ClipsDir;
+            string bakes = BakesRoot;
+
             _ = Task.Run(async () => {
                 while (_listener.IsListening) {
-
                     var ctx = await _listener.GetContextAsync();
                     var path = ctx.Request.Url!.AbsolutePath.TrimStart('/');
 
@@ -528,7 +634,11 @@ namespace NASA_Space_Apps_Challenge {
                         continue;
                     }
 
-                    var local = Path.Combine(ClipsDir, path.Replace('/', Path.DirectorySeparatorChar));
+                    // пробуем из bakes, затем из clips
+                    string local = Path.Combine(bakes, path.Replace('/', Path.DirectorySeparatorChar));
+                    if (!File.Exists(local))
+                        local = Path.Combine(clips, path.Replace('/', Path.DirectorySeparatorChar));
+
                     if (File.Exists(local)) {
                         var bytes = await File.ReadAllBytesAsync(local);
                         ctx.Response.ContentType = GetContentType(local);
@@ -544,6 +654,7 @@ namespace NASA_Space_Apps_Challenge {
                 }
             });
         }
+
 
         // select the first available id of the type "<ID>_<BAND>.tif"
         private string PickFirstId() {
@@ -818,21 +929,28 @@ namespace NASA_Space_Apps_Challenge {
 
         }
 
-        private async Task ShowOverlayForFirstSceneAsync() {
-            await webView21.EnsureCoreWebView2Async();
+        //private async Task ShowOverlayForFirstSceneAsync() {
+        //    await webView21.EnsureCoreWebView2Async();
 
-            var id = PickFirstId();
-            var pngPath = await BuildNdviOverlayPngForId(id);
+        //    var id = PickFirstId();
+        //    var pngPath = await BuildNdviOverlayPngForId(id);
 
-            var msg = JsonSerializer.Serialize(new {
-                type = "overlay",
-                url = "/" + Path.GetFileName(pngPath),  // статика отдаётся из /data/clips
-                bbox = box.ToArray()
-            });
-            webView21.CoreWebView2.PostWebMessageAsString(msg);
-        }
+        //    var msg = JsonSerializer.Serialize(new {
+        //        type = "overlay",
+        //        url = "/" + Path.GetFileName(pngPath),  // статика отдаётся из /data/clips
+        //        bbox = box.ToArray()
+        //    });
+        //    webView21.CoreWebView2.PostWebMessageAsString(msg);
+        //}
 
-        private async Task<string> BuildNdviOverlayPngForId(string id) {
+        private async Task<(string relUrl, string absPath)> BuildNdviOverlayPngForId(
+    string id,
+    string outDirAbs,   // data/bakes/<bboxKey>/<yyyyMMdd>
+    Action<int, int, string>? report = null,
+    CancellationToken ct = default) {
+            Directory.CreateDirectory(outDirAbs);
+
+
             string clipsDir = Path.Combine(AppContext.BaseDirectory, "data", "clips");
 
             // вход: B04 (red), NIR (B08 или B05), Fmask (опц.)
@@ -954,11 +1072,31 @@ namespace NASA_Space_Apps_Challenge {
             }
             bmp.UnlockBits(data);
 
-            string outPng = Path.Combine(clipsDir, $"{id}_NDVI.png");
-            bmp.Save(outPng, ImageFormat.Png);
-            return outPng;
+            string fileName = $"{id}_NDVI.png";
+            string outPngAbs = Path.Combine(outDirAbs, fileName);
+            bmp.Save(outPngAbs, ImageFormat.Png);
+
+
+
+
+            // относительный URL для HTTP — от корня bakes
+            // пример: "<bboxKey>/<yyyyMMdd>/HLSL30..._NDVI.png"
+            var rel = Path.GetRelativePath(BakesRoot, outPngAbs)
+                         .Replace(Path.DirectorySeparatorChar, '/');
+
+            report?.Invoke(100, 100, "png saved");
+            return ($"{rel}", outPngAbs);
         }
 
+
+        private void WriteBakeManifest(string dirAbs, string bboxKey, DateTime utc, IEnumerable<string> relFiles) {
+            var files = relFiles.ToArray();
+            var preferred = files.FirstOrDefault(); // стратегию можно улучшить (например, Sentinel > Landsat)
+            var man = new BakeManifest(utc.ToString("yyyy-MM-dd"), bboxKey, files, preferred);
+
+            File.WriteAllText(Path.Combine(dirAbs, "manifest.json"),
+                System.Text.Json.JsonSerializer.Serialize(man, new JsonSerializerOptions { WriteIndented = true }));
+        }
 
         // --------------------------------------------------------------------------------------
         // Helpers
@@ -1078,6 +1216,100 @@ namespace NASA_Space_Apps_Challenge {
             return (buf[iLo], buf[iHi] > buf[iLo] ? buf[iHi] : buf[iLo] + 1e-6);
         }
 
+
+        private async Task PostOverlayAsync(string relUrl, double[] bbox) {
+            await webView21.EnsureCoreWebView2Async();
+            var msg = JsonSerializer.Serialize(new {
+                type = "overlay",
+                url = relUrl,     // ВАЖНО: относительный путь относительно BakesRoot (см. StartLocalHost)
+                bbox = bbox
+            });
+            webView21.CoreWebView2.PostWebMessageAsString(msg);
+        }
+
+
+        // Попытка мгновенно показать слой из кэша (возвращает true, если получилось)
+        private async Task<bool> TryShowCachedOverlayAsync(DateTime utcDay, BBox b) {
+            string dir = BakeDir(utcDay, b);
+            string manFn = Path.Combine(dir, "manifest.json");
+            if (!File.Exists(manFn)) return false;
+
+            var man = JsonSerializer.Deserialize<BakeManifest>(await File.ReadAllTextAsync(manFn));
+            var rel = man?.preferred ?? man?.files?.FirstOrDefault();
+            if (string.IsNullOrEmpty(rel)) return false;
+
+            await PostOverlayAsync(rel!, b.ToArray());
+            return true;
+        }
+
+
+        private static string PreferFirst(IEnumerable<string> rels) {
+            // чуть «умнее»: Sentinel (HLSS30) приоритетнее Landsat (HLSL30)
+            return rels.OrderByDescending(r => r.Contains("HLSS30", StringComparison.OrdinalIgnoreCase))
+                       .ThenBy(r => r) // детерминизм
+                       .First();
+        }
+
+
+        private async Task BakeDayAsync(
+    List<(string id, string url, string band)> hrefs,
+    DateTime utcDay, BBox b,
+    IProgress<ProgressEvent> progress,
+    CancellationToken ct) {
+            string outDir = BakeDir(utcDay, b);
+            Directory.CreateDirectory(outDir);
+
+            // пекём по уникальным сценам
+            var ids = hrefs.Select(h => h.id).Distinct().ToList();
+            int total = ids.Count, done = 0;
+
+            var rels = new List<string>();
+
+            foreach (var id in ids) {
+                ct.ThrowIfCancellationRequested();
+                progress.Report(new(Stage.Bake, done, total, id));
+
+                var (rel, abs) = await BuildNdviOverlayPngForId(
+                    id,
+                    outDir,
+                    report: (c, t, note) => {
+                        // внутри одной сцены можно не «дёргать» прогресс слишком часто
+                        // но оставим короткий статус:
+                        progress.Report(new(Stage.Bake, done, total, $"{id} {note}"));
+                    },
+                    ct: ct);
+
+                rels.Add(rel);
+                done++;
+                progress.Report(new(Stage.Bake, done, total, Path.GetFileName(rel)));
+            }
+
+            // манифест
+            WriteBakeManifest(outDir, BboxKey(b), utcDay, rels);
+
+            // покажем предпочтительный слой
+            var preferred = PreferFirst(rels);
+            await PostOverlayAsync(preferred, b.ToArray());
+        }
+
+        // ===== Paths/keys =====
+        private string BakesRoot => Path.Combine(AppContext.BaseDirectory, "data", "bakes");
+
+        private static string DateKey(DateTime utc) => utc.ToString("yyyyMMdd");
+
+        private static string BboxKey(BBox b) {
+            // компактный стабильный ключ; можно md5, но округления хватает
+            string f(double v) => v.ToString("F5", System.Globalization.CultureInfo.InvariantCulture);
+            return $"{f(b.MinLon)}_{f(b.MinLat)}_{f(b.MaxLon)}_{f(b.MaxLat)}";
+        }
+
+        private string BakeDir(DateTime utc, BBox b) =>
+            Path.Combine(BakesRoot, BboxKey(b), DateKey(utc));
+
+
+        private record BakeManifest(
+            string dateUtc, string bboxKey, string[] files, string? preferred // какую картинку показывать первой
+        );
 
 
     }
