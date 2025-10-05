@@ -20,7 +20,7 @@ namespace NASA_Space_Apps_Challenge
     public partial class Form1 : Form
     {
 
-        private string googleApiKey = "AIzaSyAvUxaijMF39FQe9vU5Gz3XCOb5NTPEPWY"; // твой Google API Key
+        private string googleApiKey = "AIzaSyDAaCoMOTEbw1vZa_0CopMHbUCS8KvtP3U"; // твой Google API Key
 
         private int currentOpacity = 50;
         private string currentType = "TREE_UPI";
