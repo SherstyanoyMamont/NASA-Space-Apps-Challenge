@@ -490,36 +490,6 @@ if (!window.__webviewHandlerBound) {
 
 
 
-    //    private async Task BakeDayFixedGridAsync(
-    //List<(string id, string url, string band)> hrefs,
-    //DateTime utcDay, BBox b,
-    //IProgress<ProgressEvent> progress,
-    //CancellationToken ct) {
-    //        // выбери сцену + посчитай общий NDVI буфер как у тебя
-    //        var id = hrefs.Select(h => h.id).Distinct()
-    //                      .OrderByDescending(s => s.Contains("HLSS30", StringComparison.OrdinalIgnoreCase))
-    //                      .ThenBy(s => s)
-    //                      .First();
-
-    //        var (ndviSm, w, h, clip, ramp) = BuildNdviBufferForId(id, out var geoBounds);
-
-    //        var tilesRoot = TilesDir(utcDay, b);
-    //        Directory.CreateDirectory(tilesRoot);
-
-    //        var (xMin, xMax, yMin, yMax) = TilesCoveringBBox(Z_FIXED, b);
-    //        int total = (xMax - xMin + 1) * (yMax - yMin + 1), done = 0;
-
-    //        for (int x = xMin; x <= xMax; x++)
-    //            for (int y = yMin; y <= yMax; y++) {
-    //                ct.ThrowIfCancellationRequested();
-    //                string outAbs = TilePath(tilesRoot, x, y);
-    //                if (!File.Exists(outAbs))
-    //                    RenderTileFromNdvi(ndviSm, w, h, geoBounds, clip, ramp, GAMMA, outAbs, Z_FIXED, x, y);
-    //                if ((++done % 20) == 0)
-    //                    progress.Report(new(Stage.Bake, done, total, $"grid {done}/{total}"));
-    //            }
-    //    }
-
 
 
 
