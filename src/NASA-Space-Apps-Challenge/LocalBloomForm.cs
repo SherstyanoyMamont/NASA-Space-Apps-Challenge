@@ -223,14 +223,19 @@ function flashSelected() {
 
 
                    // ---------- управление тайловым слоем + опацити ----------
-                    function applyOpacityToTiles() {
-
-                        // все <img> текущего тайл-слоя
-                        const root = map.getDiv();
-                        const imgs = root.querySelectorAll('img[src*=""/z/""]');
-                        imgs.forEach(img => { img.style.opacity = pendingOpacity.toFixed(2); });
-
-                    }
+function applyOpacityToTiles() {
+  const root = map.getDiv();
+  // жёстко фильтруем по origin и префиксу нашего слоя
+  const prefix = `${location.origin}/${curBboxKey}/${curDateKey}/z/`;
+  const imgs = Array.from(root.querySelectorAll('img'))
+    .filter(img => {
+      try {
+        const u = new URL(img.src, location.href);
+        return u.origin === location.origin && u.pathname.startsWith(`/${curBboxKey}/${curDateKey}/z/`);
+      } catch { return false; }
+    });
+  imgs.forEach(img => { img.style.opacity = pendingOpacity.toFixed(2); });
+}
 
 
                     // helper: объединённые границы по диапазону тайлов
@@ -255,30 +260,34 @@ function addTileLayer(bboxKey, dateKey) {
     heatLayer = null;
   }
 
-heatLayer = new google.maps.ImageMapType({
-  tileSize: new google.maps.Size(256, 256),
-  getTileUrl: (coord, zoom) => {
-    const n = 1 << zoom;
-    const x = ((coord.x % n) + n) % n;
-    const y = coord.y;
-    if (y < 0 || y >= n) return null;
-    return `/${bboxKey}/${dateKey}/z/${zoom}/${x}/${y}.png?v=${tileVersion}`;
-  }
-});
+  heatLayer = new google.maps.ImageMapType({
+    tileSize: new google.maps.Size(256, 256),
+    opacity: pendingOpacity,                      // <— только так
+    getTileUrl: (coord, zoom) => {
+      const n = 1 << zoom;
+      const x = ((coord.x % n) + n) % n;
+      const y = coord.y;
+      if (y < 0 || y >= n) return null;
+      return `/${bboxKey}/${dateKey}/z/${zoom}/${x}/${y}.png?v=${tileVersion}`;
+    }
+  });
 
   map.overlayMapTypes.insertAt(0, heatLayer);
+}
 
-  // прозрачность — применим к IMG этого слоя
-  const applyOpacityToTiles = () => {
-    const root = map.getDiv();
-    const imgs = root.querySelectorAll('img'); // слой один — ок
-    imgs.forEach(img => { img.style.opacity = pendingOpacity.toFixed(2); });
-  };
 
-  google.maps.event.clearListeners(map, 'tilesloaded');
-  google.maps.event.addListenerOnce(map, 'tilesloaded', applyOpacityToTiles);
-  google.maps.event.addListener(map, 'tilesloaded', applyOpacityToTiles);
-  setTimeout(applyOpacityToTiles, 0);
+
+
+function resetForeignImgOpacity() {
+  const root = map.getDiv();
+  const prefix = `/${curBboxKey}/${curDateKey}/z/`;  // наши тайлы
+  root.querySelectorAll('img').forEach(img => {
+    try {
+      const u = new URL(img.src, location.href);
+      const isOurs = (u.origin === location.origin) && u.pathname.startsWith(prefix);
+      if (!isOurs) img.style.opacity = '';          // <— снять чужое
+    } catch {}
+  });
 }
 
 
@@ -322,12 +331,19 @@ heatLayer = new google.maps.ImageMapType({
                         const opv = document.getElementById('opv');
 
 
-                        const apply = (v) => {
-                            pendingOpacity = v;
-                            localStorage.setItem('ndviOpacity', String(v));
-                            if (overlay) overlay.setOpacity(v); // старый режим
-                            applyOpacityToTiles();              // тайловый режим
-                        };
+// Слайдер — меняем opacity только на heatLayer и чистим чужие остатки
+const apply = (v) => {
+  pendingOpacity = v;
+  localStorage.setItem('ndviOpacity', String(v));
+  if (heatLayer && typeof heatLayer.setOpacity === 'function') {
+    heatLayer.setOpacity(v);
+  }
+  if (overlay) overlay.setOpacity(v);
+  resetForeignImgOpacity();                        // <— важный вызов
+};
+
+
+
 
                         op.value = pendingOpacity.toFixed(2);
                         opv.textContent = op.value;
