@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Text.Json;
 using Newtonsoft.Json.Linq;
-
+using System.Threading.Tasks;
 
 
 
@@ -26,6 +26,37 @@ namespace NASA_Space_Apps_Challenge
         private string currentType = "TREE_UPI";
         private DateTime selectedDate = DateTime.Today;
         private HttpClient client = new HttpClient();
+
+        private string cacheDir = Path.Combine(Application.StartupPath, "pollen_cache");
+
+        private async Task<string> CacheTileAsync(int zoom, int x, int y)
+        {
+            string tileDir = Path.Combine(cacheDir, zoom.ToString());
+            Directory.CreateDirectory(tileDir);
+
+            string tilePath = Path.Combine(tileDir, $"{x}_{y}.png");
+
+            // Если уже скачан — просто возвращаем путь
+            if (File.Exists(tilePath))
+                return tilePath;
+
+            // Иначе качаем из API
+            string url = $"https://pollen.googleapis.com/v1/mapTypes/{currentType}/heatmapTiles/{zoom}/{x}/{y}?key={googleApiKey}";
+            try
+            {
+                using (HttpClient http = new HttpClient())
+                {
+                    var bytes = await http.GetByteArrayAsync(url);
+                    await File.WriteAllBytesAsync(tilePath, bytes);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка загрузки тайла {zoom}/{x}/{y}: {ex.Message}");
+            }
+
+            return tilePath;
+        }
 
 
         public Form1()
@@ -50,17 +81,14 @@ namespace NASA_Space_Apps_Challenge
             InitMap();
         }
 
-      
+
 
         private async void InitMap()
         {
             await webView21.EnsureCoreWebView2Async(null);
             double opacityValue = currentOpacity / 100.0;
 
-            if (selectedDate == DateTime.Today)
-            {
-                // Сегодняшний день — используем готовые тайлы Google
-                string html = $@"
+            string html = $@"
                 <!DOCTYPE html>
                 <html>
                 <head>
@@ -68,25 +96,103 @@ namespace NASA_Space_Apps_Challenge
                   <style>
                     html, body {{ height: 100%; margin: 0; padding: 0; }}
                     #map {{ height: 100%; width: 100%; }}
+                    .gm-style .gm-style-iw-c {{ box-shadow: none !important; }}
                   </style>
                   <script src='https://maps.googleapis.com/maps/api/js?key={googleApiKey}'></script>
                   <script>
                   function initMap() {{
                       var map = new google.maps.Map(document.getElementById('map'), {{
-                          center: {{ lat: 32.287014, lng: -96.967893 }},
-                          zoom: 9,
+                          center: {{ lat: 51.5, lng: 5.0 }},
+                          zoom: 5,
                           disableDefaultUI: true
                       }});
 
+                      // === Слой пыльцы ===
                       var pollenLayer = new google.maps.ImageMapType({{
                           getTileUrl: function(coord, zoom) {{
                               return 'https://pollen.googleapis.com/v1/mapTypes/{currentType}/heatmapTiles/' 
                                   + zoom + '/' + coord.x + '/' + coord.y + '?key={googleApiKey}';
                           }},
+                          tileSize: new google.maps.Size(256, 256),
                           opacity: {opacityValue.ToString(System.Globalization.CultureInfo.InvariantCulture)}
                       }});
-
                       map.overlayMapTypes.insertAt(0, pollenLayer);
+
+                      // === Попробуем загрузить контур Нидерландов ===
+                      fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries/NLD.geo.json')
+                          .then(response => {{
+                              if (!response.ok) throw new Error('GeoJSON not found');
+                              return response.json();
+                          }})
+                          .then(data => {{
+                              map.data.addGeoJson(data);
+                  
+                              map.data.setStyle({{
+                                  fillColor: '#888888',
+                                  fillOpacity: 0.3,
+                                  strokeColor: '#555555',
+                                  strokeWeight: 2
+                              }});
+
+                              // Подсветка при наведении
+                              map.data.addListener('mouseover', function(event) {{
+                                  map.data.overrideStyle(event.feature, {{
+                                      fillColor: '#bbbbbb',
+                                      fillOpacity: 0.5,
+                                      strokeWeight: 3
+                                  }});
+                              }});
+
+                              map.data.addListener('mouseout', function(event) {{
+                                  map.data.revertStyle();
+                              }});
+
+                              // При клике — открыть локальную форму
+                              map.data.addListener('click', function(event) {{
+                                  window.chrome.webview.postMessage('openLocalBloom');
+                              }});
+                          }})
+                          .catch(error => {{
+                              console.error('GeoJSON load error:', error);
+
+                              // === Fallback: обычный прямоугольник, если GeoJSON не загрузился ===
+                              const netherlandsBounds = {{
+                                  north: 53.6,
+                                  south: 50.7,
+                                  west: 3.3,
+                                  east: 7.2
+                              }};
+
+                              const rectangle = new google.maps.Rectangle({{
+                                  strokeColor: '#888888',
+                                  strokeOpacity: 0.9,
+                                  strokeWeight: 2,
+                                  fillColor: '#888888',
+                                  fillOpacity: 0.25,
+                                  map,
+                                  bounds: netherlandsBounds
+                              }});
+
+                              rectangle.addListener('mouseover', () => {{
+                                  rectangle.setOptions({{
+                                      fillColor: '#bbbbbb',
+                                      fillOpacity: 0.45,
+                                      strokeWeight: 3
+                                  }});
+                              }});
+
+                              rectangle.addListener('mouseout', () => {{
+                                  rectangle.setOptions({{
+                                      fillColor: '#888888',
+                                      fillOpacity: 0.25,
+                                      strokeWeight: 2
+                                  }});
+                              }});
+
+                              rectangle.addListener('click', () => {{
+                                  window.chrome.webview.postMessage('openLocalBloom');
+                              }});
+                          }});
                   }}
                   </script>
                 </head>
@@ -95,54 +201,25 @@ namespace NASA_Space_Apps_Challenge
                 </body>
                 </html>";
 
-                webView21.NavigateToString(html);
-            }
-            else
+            webView21.NavigateToString(html);
+
+            // Обработка сообщений из JS
+            webView21.CoreWebView2.WebMessageReceived += (sender, args) =>
             {
-                // Будущие даты — используем JSON и Heatmap
-                int daysDiff = Math.Clamp((selectedDate - DateTime.Today).Days, 0, 5);
-
-                string forecastJson = await GetPollenForecast(32.287014, -96.967893, daysDiff);
-                string jsHeatmapData = ParseForecastToJs(forecastJson, daysDiff);
-
-                string html = $@"
-                <!DOCTYPE html>
-                <html>
-                <head>
-                  <meta charset='utf-8'>
-                  <style>
-                    html, body {{ height: 100%; margin: 0; padding: 0; }}
-                    #map {{ height: 500px; width: 900px; }}
-                  </style>
-                  <script src='https://maps.googleapis.com/maps/api/js?key={googleApiKey}&libraries=visualization'></script>
-                  <script>
-                  function initMap() {{
-                      var map = new google.maps.Map(document.getElementById('map'), {{
-                          center: {{ lat: 32.287014, lng: -96.967893 }},
-                          zoom: 9,
-                          disableDefaultUI: true
-                      }});
-
-                      {jsHeatmapData}
-
-                      var heatmap = new google.maps.visualization.HeatmapLayer({{
-                        data: heatmapData,
-                        radius: 40,
-                        opacity: {opacityValue.ToString(System.Globalization.CultureInfo.InvariantCulture)}
-                      }});
-
-                      heatmap.setMap(map);
-                  }}
-                  </script>
-                </head>
-                <body onload='initMap()'>
-                  <div id='map'></div>
-                </body>
-                </html>";
-
-                webView21.NavigateToString(html);
-            }
+                if (args.TryGetWebMessageAsString() == "openLocalBloom")
+                {
+                    OpenLocalBloomForm();
+                }
+            };
         }
+
+
+        private void OpenLocalBloomForm()
+        {
+            LocalBloomForm localForm = new LocalBloomForm();
+            localForm.Show();
+        }
+
 
         private async Task<string> GetPollenForecast(double lat, double lon, int days)
         {

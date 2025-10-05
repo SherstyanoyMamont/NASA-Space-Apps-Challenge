@@ -8,9 +8,10 @@ using System.Text.Json;
 
 
 namespace NASA_Space_Apps_Challenge {
-    public partial class LocalBloomForm : Form {
+    public partial class LocalBloomForm : Form
+    {
 
-
+        public static LocalBloomForm? Instance;
 
         private readonly double HEATMAP_ALPHA_SCALE = 1.0;
         private readonly double NDVI_MIN = 0.20; // нижний порог “растительности”
@@ -26,108 +27,109 @@ namespace NASA_Space_Apps_Challenge {
 
         private record HeatPoint(double lat, double lon, double weight);
 
-        private string MapHtml(string apiKey) {
+        private string MapHtml(string apiKey)
+        {
 
             return $@"
-            <!doctype html><html><head><meta charset='utf-8'>
-            <meta name='viewport' content='width=device-width, initial-scale=1'>
-            <style>
-              html,body,#map{{height:100%;margin:0;padding:0}}
-              .ctl{{position:absolute;top:12px;left:12px;z-index:5;
-                    background:rgba(32,32,32,.65);color:#fff;border-radius:10px;
-                    padding:10px 12px;backdrop-filter:saturate(1.2) blur(2px);
-                    font:14px/1.2 system-ui,Segoe UI,Roboto,Helvetica,Arial}}
-              .ctl input[type=range]{{width:220px}}
-              .ctl .val{{display:inline-block;min-width:36px;text-align:right;margin-left:6px}}
-            </style>
-            <script src='https://maps.googleapis.com/maps/api/js?key={apiKey}&libraries=visualization&language=en'></script>
-            </head>
+                <!doctype html><html><head><meta charset='utf-8'>
+                <meta name='viewport' content='width=device-width, initial-scale=1'>
+                <style>
+                  html,body,#map{{height:100%;margin:0;padding:0}}
+                  .ctl{{position:absolute;top:12px;left:12px;z-index:5;
+                        background:rgba(32,32,32,.65);color:#fff;border-radius:10px;
+                        padding:10px 12px;backdrop-filter:saturate(1.2) blur(2px);
+                        font:14px/1.2 system-ui,Segoe UI,Roboto,Helvetica,Arial}}
+                  .ctl input[type=range]{{width:220px}}
+                  .ctl .val{{display:inline-block;min-width:36px;text-align:right;margin-left:6px}}
+                </style>
+                <script src='https://maps.googleapis.com/maps/api/js?key={apiKey}&libraries=visualization&language=en'></script>
+                </head>
 
-            <div style=""position:absolute;right:12px;bottom:12px;z-index:5;
-                        padding:6px 10px;border-radius:8px;background:rgba(32,32,32,.6);color:#fff;
-                        font:12px system-ui"">
-              <div style=""margin-bottom:4px"">Bloom intensity (low→high):</div>
-              <div style=""width:200px;height:10px;
-                          background:linear-gradient(90deg,
-                            #12206e 0%, #1950c8 15%, #1ec0dc 30%, #28aa5a 45%,
-                            #c8d23c 60%, #f0a83c 75%, #eb503c 90%, #b4141e 100%);
-                          border-radius:4px""></div>
-            </div>
+                <div style=""position:absolute;right:12px;bottom:12px;z-index:5;
+                            padding:6px 10px;border-radius:8px;background:rgba(32,32,32,.6);color:#fff;
+                            font:12px system-ui"">
+                  <div style=""margin-bottom:4px"">Bloom intensity (low→high):</div>
+                  <div style=""width:200px;height:10px;
+                              background:linear-gradient(90deg,
+                                #12206e 0%, #1950c8 15%, #1ec0dc 30%, #28aa5a 45%,
+                                #c8d23c 60%, #f0a83c 75%, #eb503c 90%, #b4141e 100%);
+                              border-radius:4px""></div>
+                </div>
 
 
-            <body>
-            <div id='map'></div>
+                <body>
+                <div id='map'></div>
 
-            <div class='ctl'>
-              <label>Bloom map opacity:
-                <input id='op' type='range' min='0' max='1' step='0.01' value='0.55'>
-                <span id='opv' class='val'>0.55</span>
-              </label>
-            </div>
+                <div class='ctl'>
+                  <label>Bloom map opacity:
+                    <input id='op' type='range' min='0' max='1' step='0.01' value='0.55'>
+                    <span id='opv' class='val'>0.55</span>
+                  </label>
+                </div>
 
-            <script>
-            let map, overlay;
-            let pendingOpacity = parseFloat(localStorage.getItem('ndviOpacity') || '0.55');
+                <script>
+                let map, overlay;
+                let pendingOpacity = parseFloat(localStorage.getItem('ndviOpacity') || '0.55');
 
-            function init(){{
-              map = new google.maps.Map(document.getElementById('map'), {{
-                center:{{lat:52.675,lng:5.80}}, zoom:12, 
+                function init(){{
+                  map = new google.maps.Map(document.getElementById('map'), {{
+                    center:{{lat:52.675,lng:5.80}}, zoom:12, 
 
-              mapTypeId:'hybrid', 
-              mapTypeControl:false, // ""Карта/Спутник""
-              fullscreenControl: false,  // полноэкранный
-              streetViewControl: false,  // ""человечек""
-              zoomControl: false,        // +/- зум
-              rotateControl: false,      // компас/поворот
-              scaleControl: false        // масштаб (внизу)
-              }});
+                  mapTypeId:'hybrid', 
+                  mapTypeControl:false, // ""Карта/Спутник""
+                  fullscreenControl: false,  // полноэкранный
+                  streetViewControl: false,  // ""человечек""
+                  zoomControl: false,        // +/- зум
+                  rotateControl: false,      // компас/поворот
+                  scaleControl: false        // масштаб (внизу)
+                  }});
 
-              const op = document.getElementById('op');
-              const opv = document.getElementById('opv');
+                  const op = document.getElementById('op');
+                  const opv = document.getElementById('opv');
 
-              // init UI
-              op.value = pendingOpacity.toFixed(2);
-              opv.textContent = op.value;
+                  // init UI
+                  op.value = pendingOpacity.toFixed(2);
+                  opv.textContent = op.value;
 
-              const apply = (v) => {{
-                pendingOpacity = v;
-                localStorage.setItem('ndviOpacity', String(v));
-                if (overlay) overlay.setOpacity(v);
-              }};
+                  const apply = (v) => {{
+                    pendingOpacity = v;
+                    localStorage.setItem('ndviOpacity', String(v));
+                    if (overlay) overlay.setOpacity(v);
+                  }};
 
-              op.addEventListener('input', () => {{
-                const v = parseFloat(op.value);
-                opv.textContent = v.toFixed(2);
-                apply(v);
-              }});
+                  op.addEventListener('input', () => {{
+                    const v = parseFloat(op.value);
+                    opv.textContent = v.toFixed(2);
+                    apply(v);
+                  }});
 
-              apply(pendingOpacity);
-            }}
-            init();
+                  apply(pendingOpacity);
+                }}
+                init();
 
-            function addOverlayPng(pngUrl, bbox){{
-              // поддержка и объекта, и массива [minLon, minLat, maxLon, maxLat]
-              const b = Array.isArray(bbox)
-                ? {{ minLon: bbox[0], minLat: bbox[1], maxLon: bbox[2], maxLat: bbox[3] }}
-                : bbox;
+                function addOverlayPng(pngUrl, bbox){{
+                  // поддержка и объекта, и массива [minLon, minLat, maxLon, maxLat]
+                  const b = Array.isArray(bbox)
+                    ? {{ minLon: bbox[0], minLat: bbox[1], maxLon: bbox[2], maxLat: bbox[3] }}
+                    : bbox;
 
-              const imageBounds = {{ south: b.minLat, west: b.minLon, north: b.maxLat, east: b.maxLon }};
-              if (overlay) overlay.setMap(null);
-              overlay = new google.maps.GroundOverlay(pngUrl, imageBounds, {{ opacity: pendingOpacity }});
-              overlay.setMap(map);
-              map.fitBounds(new google.maps.LatLngBounds(
-                new google.maps.LatLng(imageBounds.south, imageBounds.west),
-                new google.maps.LatLng(imageBounds.north, imageBounds.east)
-              ));
-            }}
+                  const imageBounds = {{ south: b.minLat, west: b.minLon, north: b.maxLat, east: b.maxLon }};
+                  if (overlay) overlay.setMap(null);
+                  overlay = new google.maps.GroundOverlay(pngUrl, imageBounds, {{ opacity: pendingOpacity }});
+                  overlay.setMap(map);
+                  map.fitBounds(new google.maps.LatLngBounds(
+                    new google.maps.LatLng(imageBounds.south, imageBounds.west),
+                    new google.maps.LatLng(imageBounds.north, imageBounds.east)
+                  ));
+                }}
 
-            window.chrome?.webview?.addEventListener('message', e => {{
-              try {{
-                const msg = JSON.parse(e.data);
-                if (msg.type === 'overlay') addOverlayPng(msg.url, msg.bbox);
-              }} catch(err) {{ console.error(err); }}
-            }});
-            </script></body></html>";
+                window.chrome?.webview?.addEventListener('message', e => {{
+                  try {{
+                    const msg = JSON.parse(e.data);
+                    if (msg.type === 'overlay') addOverlayPng(msg.url, msg.bbox);
+                  }} catch(err) {{ console.error(err); }}
+                }});
+                </script></body></html>";
         }
 
         // Path to the clips
@@ -135,9 +137,11 @@ namespace NASA_Space_Apps_Challenge {
 
         private HttpListener _listener;
 
-        public struct BBox {
+        public struct BBox
+        {
 
-            public BBox(double minLon, double minLat, double maxLon, double maxLat) {
+            public BBox(double minLon, double minLat, double maxLon, double maxLat)
+            {
                 MinLon = minLon;
                 MinLat = minLat;
                 MaxLon = maxLon;
@@ -164,16 +168,27 @@ namespace NASA_Space_Apps_Challenge {
 
         public BBox box = new BBox(5.70, 52.60, 5.90, 52.75);
 
-        public LocalBloomForm() {
+        public LocalBloomForm()
+        {
             InitializeComponent();
+            if (Instance != null) this.Close(); else Instance = this;
+
+            this.FormClosing += (_, __) =>
+            {
+                try { _listener?.Stop(); Instance = null; } catch { /* ignore */ }
+            };
+
+            this.Shown += (_, __) => { OpenMap();};
         }
 
         // ------------------------------------------------------------
         // UI 
         // ------------------------------------------------------------
 
-        private async void button1_Click(object sender, EventArgs e) {
-            try {
+        private async void button1_Click(object sender, EventArgs e)
+        {
+            try
+            {
                 // 1) STAC-поиск HLS (HLSS30 + HLSL30) в окне дат
                 using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
                 http.DefaultRequestHeaders.Authorization =
@@ -182,7 +197,8 @@ namespace NASA_Space_Apps_Challenge {
                 var start = new DateTime(2025, 6, 1, 0, 0, 0, DateTimeKind.Utc);
                 var endExcl = new DateTime(2025, 6, 3, 0, 0, 0, DateTimeKind.Utc);
 
-                var body = new {
+                var body = new
+                {
                     collections = new[] { "HLSS30.v2.0", "HLSL30.v2.0" },
                     bbox = box.ToArray(),
                     datetime = $"{start:yyyy-MM-ddTHH:mm:ssZ}/{endExcl:yyyy-MM-ddTHH:mm:ssZ}",
@@ -194,18 +210,22 @@ namespace NASA_Space_Apps_Challenge {
                 resp.EnsureSuccessStatusCode();
 
                 var hrefs = new List<(string id, string url, string band)>();
-                using (var doc = JsonDocument.Parse(respText)) {
-                    foreach (var f in doc.RootElement.GetProperty("features").EnumerateArray()) {
+                using (var doc = JsonDocument.Parse(respText))
+                {
+                    foreach (var f in doc.RootElement.GetProperty("features").EnumerateArray())
+                    {
                         var id = f.GetProperty("id").GetString()!;
                         var assets = f.GetProperty("assets");
-                        foreach (var band in new[] { "B03", "B04", "B08", "B05", "Fmask" }) {
+                        foreach (var band in new[] { "B03", "B04", "B08", "B05", "Fmask" })
+                        {
                             if (assets.TryGetProperty(band, out var a) && a.TryGetProperty("href", out var href))
                                 hrefs.Add((id, href.GetString()!, band));
                         }
                     }
                 }
 
-                if (hrefs.Count == 0) {
+                if (hrefs.Count == 0)
+                {
                     MessageBox.Show("STAC: не найдено ни одной сцены/полосы для заданного bbox/дат.");
                     return;
                 }
@@ -231,16 +251,19 @@ namespace NASA_Space_Apps_Challenge {
                 MessageBox.Show(
                     $"Готово.\nКлипов: {tifCount}\nПервая сцена: {firstId}\nHeat points: {heatPts.Count}\nJSON: {heatJsonPath}");
             }
-            catch (Exception ex) {
+            catch (Exception ex)
+            {
                 MessageBox.Show("Ошибка теста клипов:\n" + ex);
             }
         }
 
-        private async void bOpenMap_Click(object sender, EventArgs e) {
+        private async void OpenMap()
+        {
             StartLocalHost(5173, GOOGLE_API_KEY);
             await webView21.EnsureCoreWebView2Async();
 
-            webView21.CoreWebView2.NavigationCompleted += async (_, __) => {
+            webView21.CoreWebView2.NavigationCompleted += async (_, __) =>
+            {
                 try { await ShowOverlayForFirstSceneAsync(); } catch { /* ignore */ }
             };
 
@@ -250,9 +273,10 @@ namespace NASA_Space_Apps_Challenge {
             webView21.CoreWebView2.Navigate("http://localhost:5173/");
         }
 
-        private void StartLocalHost(int port, string apiKey) {
+        private void StartLocalHost(int port, string apiKey)
+        {
 
-           if(_listener!=null) _listener.Stop();
+            if (_listener != null) _listener.Stop();
 
             _listener = new HttpListener();
             _listener.Prefixes.Add($"http://localhost:{port}/");
@@ -261,12 +285,15 @@ namespace NASA_Space_Apps_Challenge {
 
             string clips = Path.Combine(AppContext.BaseDirectory, "data", "clips");
 
-            _ = Task.Run(async () => {
-                while (_listener.IsListening) {
+            _ = Task.Run(async () =>
+            {
+                while (_listener.IsListening)
+                {
                     var ctx = await _listener.GetContextAsync();
                     var path = ctx.Request.Url!.AbsolutePath.TrimStart('/');
 
-                    if (string.IsNullOrEmpty(path)) {
+                    if (string.IsNullOrEmpty(path))
+                    {
                         var html = MapHtml(apiKey);
                         var b = Encoding.UTF8.GetBytes(html);
                         ctx.Response.ContentType = "text/html; charset=utf-8";
@@ -277,14 +304,16 @@ namespace NASA_Space_Apps_Challenge {
                     }
 
                     var local = Path.Combine(clips, path.Replace('/', Path.DirectorySeparatorChar));
-                    if (File.Exists(local)) {
+                    if (File.Exists(local))
+                    {
                         var bytes = await File.ReadAllBytesAsync(local);
                         ctx.Response.ContentType = GetContentType(local);
                         ctx.Response.ContentLength64 = bytes.LongLength;
                         await ctx.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length);
                         ctx.Response.OutputStream.Close();
                     }
-                    else {
+                    else
+                    {
                         ctx.Response.StatusCode = 404;
                         await ctx.Response.OutputStream.WriteAsync(Encoding.UTF8.GetBytes("404"));
                         ctx.Response.OutputStream.Close();
@@ -294,7 +323,8 @@ namespace NASA_Space_Apps_Challenge {
         }
 
         // select the first available id of the type "<ID>_<BAND>.tif"
-        private string PickFirstId() {
+        private string PickFirstId()
+        {
             var files = Directory.GetFiles(ClipsDir, "*.tif");
             var ids = files
                 .Select(f => Path.GetFileNameWithoutExtension(f)!)
@@ -306,9 +336,11 @@ namespace NASA_Space_Apps_Challenge {
         }
 
         // Write heat.json if it doesn't exist yet.
-        private string EnsureHeatForId(string id) {
+        private string EnsureHeatForId(string id)
+        {
             var outJson = Path.Combine(ClipsDir, $"{id}_heat.json");
-            if (!File.Exists(outJson)) {
+            if (!File.Exists(outJson))
+            {
                 var pts = BuildHeat(id); // у тебя эта функция уже есть
                 var json = ToHeatmapJson(pts);
                 File.WriteAllText(outJson, json);
@@ -317,15 +349,18 @@ namespace NASA_Space_Apps_Challenge {
         }
 
         // Sending bbox and heat to WebView2
-        private async Task ShowHeatAsync(string apiKey) {
+        private async Task ShowHeatAsync(string apiKey)
+        {
             // HTML in WebView2
             await webView21.EnsureCoreWebView2Async();
             webView21.CoreWebView2.NavigateToString(MapHtml(apiKey));
 
             // wait for page loading and push data
-            webView21.CoreWebView2.NavigationCompleted += (_, __) => {
+            webView21.CoreWebView2.NavigationCompleted += (_, __) =>
+            {
                 // bbox region
-                var bboxMsg = System.Text.Json.JsonSerializer.Serialize(new {
+                var bboxMsg = System.Text.Json.JsonSerializer.Serialize(new
+                {
                     type = "bbox",
                     box.MinLon,
                     box.MinLat,
@@ -344,7 +379,8 @@ namespace NASA_Space_Apps_Challenge {
             };
         }
 
-        private short[,] ReadTiff16(string path) {
+        private short[,] ReadTiff16(string path)
+        {
             using var image = BitMiracle.LibTiff.Classic.Tiff.Open(path, "r");
 
             int width = image.GetField(BitMiracle.LibTiff.Classic.TiffTag.IMAGEWIDTH)[0].ToInt();
@@ -362,27 +398,33 @@ namespace NASA_Space_Apps_Challenge {
             var arr = new short[height, width];
             var scanline = new byte[image.ScanlineSize()];
 
-            for (int y = 0; y < height; y++) {
+            for (int y = 0; y < height; y++)
+            {
                 image.ReadScanline(scanline, y);
-                for (int x = 0; x < width; x++) {
+                for (int x = 0; x < width; x++)
+                {
                     int off = x * bytesPerPixel;
                     if (off + bytesPerSample > scanline.Length) break; // защита от выхода
 
                     short val;
-                    if (isFloat && bytesPerSample == 4) {
+                    if (isFloat && bytesPerSample == 4)
+                    {
                         float f = BitConverter.ToSingle(scanline, off);      // 0..1 (обычно)
                         int v = (int)Math.Round(f * 10000.0);
                         val = (short)Math.Clamp(v, 0, 10000);
                     }
-                    else if (bytesPerSample == 2) {
+                    else if (bytesPerSample == 2)
+                    {
                         ushort u = BitConverter.ToUInt16(scanline, off);
                         val = (short)u; // 0..65535, но HLS 0..10000
                     }
-                    else if (bytesPerSample == 1) {
+                    else if (bytesPerSample == 1)
+                    {
                         byte b = scanline[off];
                         val = (short)(b << 8);
                     }
-                    else {
+                    else
+                    {
                         // Неподдержанный формат — запишем 0
                         val = 0;
                     }
@@ -393,7 +435,8 @@ namespace NASA_Space_Apps_Challenge {
             return arr;
         }
 
-        private List<HeatPoint> BuildHeat(string id) {
+        private List<HeatPoint> BuildHeat(string id)
+        {
             string baseDir = Path.Combine("data", "clips");
 
             string b03 = Directory.GetFiles(baseDir, $"{id}_B03.tif").FirstOrDefault();
@@ -424,16 +467,21 @@ namespace NASA_Space_Apps_Challenge {
 
             var pts = new List<HeatPoint>((w / bx + 1) * (h / by + 1));
 
-            for (int y0 = 0; y0 < h; y0 += by) {
-                for (int x0 = 0; x0 < w; x0 += bx) {
+            for (int y0 = 0; y0 < h; y0 += by)
+            {
+                for (int x0 = 0; x0 < w; x0 += bx)
+                {
                     double sum = 0; int cnt = 0;
 
                     int y1 = Math.Min(h, y0 + by);
                     int x1 = Math.Min(w, x0 + bx);
 
-                    for (int y = y0; y < y1; y++) {
-                        for (int x = x0; x < x1; x++) {
-                            if (F != null) {
+                    for (int y = y0; y < y1; y++)
+                    {
+                        for (int x = x0; x < x1; x++)
+                        {
+                            if (F != null)
+                            {
                                 // 4=Cloud, 2=Shadow — пропускаем
                                 var c = F[y, x];
                                 if (c == 4 || c == 2) continue;
@@ -456,14 +504,16 @@ namespace NASA_Space_Apps_Challenge {
                             double wgt = Math.Sqrt(Math.Clamp(gri01 * ndvi01, 0, 1));
 
                             // отрезаем шум
-                            if (wgt >= 0.15) {
+                            if (wgt >= 0.15)
+                            {
                                 sum += wgt;
                                 cnt++;
                             }
                         }
                     }
 
-                    if (cnt > 0) {
+                    if (cnt > 0)
+                    {
                         double avg = sum / cnt;               // средний вес по ячейке
                         double lon = box.MinLon + (x0 + (x1 - x0) * 0.5) * lonStep;
                         double lat = box.MaxLat - (y0 + (y1 - y0) * 0.5) * latStep;
@@ -476,8 +526,10 @@ namespace NASA_Space_Apps_Challenge {
             return pts;
         }
 
-        private string ToHeatmapJson(IEnumerable<HeatPoint> pts) {
-            var arr = pts.Select(p => new {
+        private string ToHeatmapJson(IEnumerable<HeatPoint> pts)
+        {
+            var arr = pts.Select(p => new
+            {
                 location = new { lat = p.lat, lng = p.lon },
                 weight = Math.Round(p.weight, 3)
             });
@@ -485,7 +537,8 @@ namespace NASA_Space_Apps_Challenge {
         }
 
         // Ищем, где лежит proj.db (поддерживаем обе раскладки из GISInternals)
-        private string ResolveProjDir(string gdalRoot) {
+        private string ResolveProjDir(string gdalRoot)
+        {
             var candidates = new[]
             {
         Path.Combine(gdalRoot, "share", "proj"),
@@ -502,7 +555,8 @@ namespace NASA_Space_Apps_Challenge {
         }
 
         // Ищем GDAL-data(у GISInternals чаще всего bin\gdal-data, но бывает share\gdal)
-        private string ResolveGdalDataDir(string gdalRoot) {
+        private string ResolveGdalDataDir(string gdalRoot)
+        {
             var candidates = new[]
             {
                 Path.Combine(gdalRoot, "bin",   "gdal-data"),
@@ -517,19 +571,24 @@ namespace NASA_Space_Apps_Challenge {
         }
 
         // separable 3x3 [1,2,1]/4, учитывает NaN и не «размывает» в пустоту
-        private static float[] Blur3x3NaNAware(float[] src, int w, int h, int passes = 1) {
+        private static float[] Blur3x3NaNAware(float[] src, int w, int h, int passes = 1)
+        {
             var tmp = new float[w * h];
             var dst = new float[w * h];
             Array.Copy(src, dst, src.Length);
 
-            for (int p = 0; p < passes; p++) {
+            for (int p = 0; p < passes; p++)
+            {
                 // горизонталь
-                for (int y = 0; y < h; y++) {
+                for (int y = 0; y < h; y++)
+                {
                     int row = y * w;
-                    for (int x = 0; x < w; x++) {
+                    for (int x = 0; x < w; x++)
+                    {
                         double sum = 0, wsum = 0;
 
-                        void acc(int ix, double wgt) {
+                        void acc(int ix, double wgt)
+                        {
                             if (ix < 0 || ix >= w) return;
                             float v = dst[row + ix];
                             if (float.IsFinite(v)) { sum += v * wgt; wsum += wgt; }
@@ -541,11 +600,14 @@ namespace NASA_Space_Apps_Challenge {
                 }
 
                 // вертикаль
-                for (int y = 0; y < h; y++) {
-                    for (int x = 0; x < w; x++) {
+                for (int y = 0; y < h; y++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
                         double sum = 0, wsum = 0;
 
-                        void acc(int iy, double wgt) {
+                        void acc(int iy, double wgt)
+                        {
                             if (iy < 0 || iy >= h) return;
                             float v = tmp[iy * w + x];
                             if (float.IsFinite(v)) { sum += v * wgt; wsum += wgt; }
@@ -564,7 +626,8 @@ namespace NASA_Space_Apps_Challenge {
         private async Task<string> RunGdalWarpAsync(
             string gdalRoot, string exePath, string url, string outTif,
             double minLon, double minLat, double maxLon, double maxLat,
-            string earthToken, int outWidth = 512) {
+            string earthToken, int outWidth = 512)
+        {
             string binDir = Path.Combine(gdalRoot, "bin");
             string gdalData = ResolveGdalDataDir(gdalRoot);
             string projDir = ResolveProjDir(gdalRoot);
@@ -572,7 +635,8 @@ namespace NASA_Space_Apps_Challenge {
             // 1) скачиваем защищённый TIFF локально
             string srcLocal = await DownloadWithBearerAsync(url, earthToken);
 
-            try {
+            try
+            {
                 var args =
                     $"--config GDAL_DATA \"{gdalData}\" " +
                     $"--config PROJ_LIB  \"{projDir}\" " +
@@ -584,7 +648,8 @@ namespace NASA_Space_Apps_Challenge {
                     $"-of GTiff " +
                     $@"""{srcLocal}"" ""{outTif}""";
 
-                var psi = new System.Diagnostics.ProcessStartInfo(exePath, args) {
+                var psi = new System.Diagnostics.ProcessStartInfo(exePath, args)
+                {
                     UseShellExecute = false,
                     RedirectStandardError = true,
                     RedirectStandardOutput = true,
@@ -603,12 +668,14 @@ namespace NASA_Space_Apps_Challenge {
 
                 return outTif;
             }
-            finally {
+            finally
+            {
                 try { System.IO.File.Delete(srcLocal); } catch { /* ignore */ }
             }
         }
 
-        private string ResolveGdalApp(string gdalRoot, string appExe) {
+        private string ResolveGdalApp(string gdalRoot, string appExe)
+        {
             var candidates = new[]
             {
         Path.Combine(gdalRoot, "gdal", "apps", appExe),
@@ -621,7 +688,8 @@ namespace NASA_Space_Apps_Challenge {
             return found;
         }
 
-        private async Task<string> DownloadWithBearerAsync(string url, string token) {
+        private async Task<string> DownloadWithBearerAsync(string url, string token)
+        {
             string tmp = Path.Combine(Path.GetTempPath(), "hls_" + Guid.NewGuid().ToString("N") + ".tif");
             using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true, AutomaticDecompression = DecompressionMethods.All });
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -632,7 +700,8 @@ namespace NASA_Space_Apps_Challenge {
             return tmp; // не удаляем сразу – удалим после warp/ошибки
         }
 
-        private async Task ClipFewScenesAsync(IEnumerable<(string id, string url, string band)> assets) {
+        private async Task ClipFewScenesAsync(IEnumerable<(string id, string url, string band)> assets)
+        {
             Directory.CreateDirectory(Path.Combine("data", "clips"));
             var gdalRoot = Path.Combine(AppContext.BaseDirectory, "release-1930-x64-gdal-3-11-3-mapserver-8-4-0");
             var sem = new SemaphoreSlim(3);
@@ -645,9 +714,11 @@ namespace NASA_Space_Apps_Challenge {
 
             var warpExe = ResolveGdalApp(gdalRoot, "gdalwarp.exe");
 
-            var tasks = wanted.Select(async a => {
+            var tasks = wanted.Select(async a =>
+            {
                 await sem.WaitAsync();
-                try {
+                try
+                {
                     var fileName = $"{a.id}_{a.band}.tif"
                         .Replace('/', '_').Replace('\\', '_'); // на всякий случай
 
@@ -667,13 +738,15 @@ namespace NASA_Space_Apps_Challenge {
 
         }
 
-        private async Task ShowOverlayForFirstSceneAsync() {
+        private async Task ShowOverlayForFirstSceneAsync()
+        {
             await webView21.EnsureCoreWebView2Async();
 
             var id = PickFirstId();
             var pngPath = await BuildNdviOverlayPngForId(id);
 
-            var msg = JsonSerializer.Serialize(new {
+            var msg = JsonSerializer.Serialize(new
+            {
                 type = "overlay",
                 url = Path.GetFileName(pngPath),  // статика отдаётся из /data/clips
                 bbox = box.ToArray()
@@ -681,7 +754,8 @@ namespace NASA_Space_Apps_Challenge {
             webView21.CoreWebView2.PostWebMessageAsString(msg);
         }
 
-        private async Task<string> BuildNdviOverlayPngForId(string id) {
+        private async Task<string> BuildNdviOverlayPngForId(string id)
+        {
             string clipsDir = Path.Combine(AppContext.BaseDirectory, "data", "clips");
 
             // вход: B04 (red), NIR (B08 или B05), Fmask (опц.)
@@ -721,10 +795,13 @@ namespace NASA_Space_Apps_Challenge {
             var ndvi = new float[h * w];
             int k = 0;
             var vals = new List<float>(h * w / 4); // не храним NaN
-            for (int y = 0; y < h; y++) {
-                for (int x = 0; x < w; x++, k++) {
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++, k++)
+                {
                     // маска облаков/воды/снега — берём только clear=0. (земля нужна → воду выкидываем)
-                    if (F != null) {
+                    if (F != null)
+                    {
                         int c = F[y, x];
                         if (c == 1 || c == 2 || c == 3 || c == 4 || c == 255) { ndvi[k] = float.NaN; continue; }
                     }
@@ -765,14 +842,18 @@ namespace NASA_Space_Apps_Challenge {
             // дальше в рендере используй ndviSm вместо ndvi
             using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             var data = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, bmp.PixelFormat);
-            unsafe {
+            unsafe
+            {
                 byte* row = (byte*)data.Scan0;
                 k = 0;
-                for (int y = 0; y < h; y++, row += data.Stride) {
+                for (int y = 0; y < h; y++, row += data.Stride)
+                {
                     byte* px = row;
-                    for (int x = 0; x < w; x++, k++) {
+                    for (int x = 0; x < w; x++, k++)
+                    {
                         float v = ndviSm[k];
-                        if (!float.IsFinite(v)) {
+                        if (!float.IsFinite(v))
+                        {
                             // полностью прозрачный пиксель
                             px[0] = px[1] = px[2] = 0; px[3] = 0; px += 4; continue;
                         }
@@ -810,7 +891,8 @@ namespace NASA_Space_Apps_Challenge {
             return outPng;
         }
 
-        private static string GetContentType(string path) => Path.GetExtension(path).ToLower() switch {
+        private static string GetContentType(string path) => Path.GetExtension(path).ToLower() switch
+        {
             ".png" => "image/png",
             ".jpg" => "image/jpeg",
             ".jpeg" => "image/jpeg",
@@ -824,10 +906,12 @@ namespace NASA_Space_Apps_Challenge {
         // Helpers
         // --------------------------------------------------------------------------------------
 
-        private struct Stop {
+        private struct Stop
+        {
             public double v;
             public byte r, g, b, a;
-            public Stop(double v, byte r, byte g, byte b, byte a) {
+            public Stop(double v, byte r, byte g, byte b, byte a)
+            {
                 this.v = v;
                 this.r = r;
                 this.g = g;
@@ -836,13 +920,15 @@ namespace NASA_Space_Apps_Challenge {
             }
         }
 
-        private static (byte r, byte g, byte b, byte a) Lerp(Stop a, Stop b, double t) {
+        private static (byte r, byte g, byte b, byte a) Lerp(Stop a, Stop b, double t)
+        {
             // t in [0..1]
             byte L(byte A, byte B) => (byte)Math.Clamp(Math.Round(A + (B - A) * t), 0, 255);
             return (L(a.r, b.r), L(a.g, b.g), L(a.b, b.b), L(a.a, b.a));
         }
 
-        private static (double lo, double hi) PercentileClip(ReadOnlySpan<float> vals, double pLo = 5, double pHi = 95) {
+        private static (double lo, double hi) PercentileClip(ReadOnlySpan<float> vals, double pLo = 5, double pHi = 95)
+        {
             // простая реализация: копия+сортировка; для клипов 256–1024 px это ок
             var buf = vals.ToArray();
             Array.Sort(buf);
@@ -851,6 +937,11 @@ namespace NASA_Space_Apps_Challenge {
             int iLo = (int)Math.Clamp(Math.Round((pLo / 100.0) * (n - 1)), 0, n - 1);
             int iHi = (int)Math.Clamp(Math.Round((pHi / 100.0) * (n - 1)), 0, n - 1);
             return (buf[iLo], buf[iHi] > buf[iLo] ? buf[iHi] : buf[iLo] + 1e-6);
+        }
+
+        private void LocalBloomForm_Load(object sender, EventArgs e)
+        {
+
         }
     }
 }
