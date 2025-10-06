@@ -57,7 +57,7 @@ namespace NASA_Space_Apps_Challenge {
 
         private record HeatPoint(double lat, double lon, double weight);
 
-        private string MapHtml(string apiKey) {
+        private string GetMapPage(string apiKey) {
 
 
 
@@ -496,7 +496,7 @@ if (!window.__webviewHandlerBound) {
         private async Task<(List<(string id, string url, string band)> hrefs, DateTime day)>
 SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
             using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Keys.EARTH_LOGIN_TOKEN);
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", APIKeys.EARTH_LOGIN_TOKEN);
 
             var start = new DateTime(utcDay.Year, utcDay.Month, utcDay.Day, 0, 0, 0, DateTimeKind.Utc);
             var endExcl = new DateTime(utcDay.Year, utcDay.Month, utcDay.Day, 23, 59, 0, DateTimeKind.Utc);
@@ -656,7 +656,7 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
         private async Task<(List<(string id, string url, string band)> hrefs, DateTime day)>
     SearchAsync(CancellationToken ct) {
             using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
-            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Keys.EARTH_LOGIN_TOKEN);
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", APIKeys.EARTH_LOGIN_TOKEN);
 
             var selDate = this.timelineControl1.Current;
             var start = new DateTime(selDate.Year, selDate.Month, selDate.Day, 0, 0, 0, DateTimeKind.Utc);
@@ -715,7 +715,7 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
                             gdalRoot, warpExe,
                             a.url, outTifAbs,
                             box.MinLon, box.MinLat, box.MaxLon, box.MaxLat,
-                            Keys.EARTH_LOGIN_TOKEN, 768, ct);
+                            APIKeys.EARTH_LOGIN_TOKEN, 768, ct);
                     }
 
                     onWarp(a.id, a.band, idx);
@@ -776,7 +776,7 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
 
         private async void OpenMap() {
 
-            StartLocalHost(5173, Keys.GOOGLE_API_KEY);
+            StartLocalHost(5173, APIKeys.GOOGLE_API_KEY);
 
             await webView21.EnsureCoreWebView2Async();
             webView21.CoreWebView2.NavigationCompleted += async (_, __) => {
@@ -909,7 +909,7 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
                 var outTifAbs = Path.Combine(ClipsDir, fileName);
                 if (!File.Exists(outTifAbs)) {
                     await RunGdalWarpAsync(gdalRoot, warpExe, a.url, outTifAbs,
-                        b.MinLon, b.MinLat, b.MaxLon, b.MaxLat, Keys.EARTH_LOGIN_TOKEN, 768);
+                        b.MinLon, b.MinLat, b.MaxLon, b.MaxLat, APIKeys.EARTH_LOGIN_TOKEN, 768);
                 }
             }
         }
@@ -985,7 +985,7 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
                     var path = ctx.Request.Url!.AbsolutePath.TrimStart('/');
 
                     if (string.IsNullOrEmpty(path)) {
-                        var html = MapHtml(apiKey);
+                        var html = GetMapPage(apiKey);
                         var b = Encoding.UTF8.GetBytes(html);
                         ctx.Response.ContentType = "text/html; charset=utf-8";
                         ctx.Response.ContentLength64 = b.LongLength;
@@ -1280,7 +1280,7 @@ SearchForDayAsync(DateTime utcDay, CancellationToken ct) {
                             gdalRoot, warpExe,
                             a.url, outTifAbs,           // <-- абсолютный
                              box.MinLon, box.MinLat, box.MaxLon, box.MaxLat,
-                            Keys.EARTH_LOGIN_TOKEN, 768);
+                            APIKeys.EARTH_LOGIN_TOKEN, 768);
                 }
                 finally { sem.Release(); }
             });
